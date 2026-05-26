@@ -548,14 +548,22 @@ body {
       </div>
 
       <div class="btn-row" style="margin-top:10px;">
-        <button class="btn-save" id="relayCreateRoom">创建房间</button>
-        <button class="btn-save" id="relayJoinRoom">加入房间</button>
+        <button class="btn-save" id="relayCreateRoom">MQTT 创建</button>
+        <button class="btn-save" id="relayJoinRoom">MQTT 加入</button>
       </div>
 
-      <p id="relayStatus" style="font-size:11px;color:var(--text2);margin-top:8px;text-align:center;"></p>
+      <hr style="border:none;border-top:1px solid #333;margin:12px 0;">
+
+      <p style="font-size:11px;color:var(--text2);margin-bottom:4px;">如果 MQTT 连不上，试试云端同步（轮询方式）：</p>
+      <div class="btn-row">
+        <button class="btn-save" id="cloudCreate" style="background:var(--purple);">云端创建</button>
+        <button class="btn-save" id="cloudJoin" style="background:var(--purple);">云端加入</button>
+      </div>
+
+      <div id="relayLog" style="margin-top:10px;padding:8px;background:var(--bg);border-radius:var(--radius);font-size:11px;font-family:monospace;max-height:120px;overflow-y:auto;line-height:1.6;display:none;"></div>
 
       <div class="btn-row" style="margin-top:12px;">
-        <button class="btn-disconnect" id="relayDisconnect" style="display:none;">断开中继</button>
+        <button class="btn-disconnect" id="relayDisconnect" style="display:none;">断开</button>
         <button class="btn-secondary" id="relayConnCancel">关闭</button>
       </div>
     </div>
@@ -1135,12 +1143,30 @@ function generateRoomId() {
   return id;
 }
 
+function relayLog(msg, color) {
+  const log = $('relayLog');
+  log.style.display = 'block';
+  const line = document.createElement('div');
+  line.textContent = '> ' + msg;
+  line.style.color = color || 'var(--text2)';
+  log.appendChild(line);
+  log.scrollTop = log.scrollHeight;
+  console.log('[RELAY]', msg);
+}
+
 function openRelayConnect() {
   closeManualPc();
   $('relayConnOverlay').classList.add('show');
-  $('relayStatus').textContent = '';
+  $('relayLog').innerHTML = '';
+  $('relayLog').style.display = 'none';
   $('relayRoomId').value = '';
   $('relayDisconnect').style.display = 'none';
+  // 检查 MQTT 是否加载
+  if (typeof mqtt === 'undefined') {
+    relayLog('MQTT.js 库未加载，请检查网络后刷新页面', 'var(--red)');
+  } else {
+    relayLog('MQTT.js 已就绪', 'var(--green)');
+  }
 }
 
 function closeRelayConnect() {
@@ -1169,6 +1195,7 @@ function connectMQTT(roomId, role) {
     return;
   }
 
+  relayLog('连接中...', 'var(--orange)');
   $('relayStatus').textContent = '连接中...';
   $('relayStatus').style.color = 'var(--orange)';
 
@@ -1347,6 +1374,140 @@ function handleRelayDisconnect() {
   updateConnectionUI();
 }
 
+// ==================== HTTP 云端同步（JSON Blob 轮询） ====================
+let cloudBlobId = null;
+let cloudPollTimer = null;
+let cloudSeq = 0;
+const CLOUD_API = 'https://jsonblob.com/api/jsonBlob';
+
+async function cloudCreate() {
+  const roomId = $('relayRoomId').value.trim() || generateRoomId();
+  $('relayRoomId').value = roomId;
+  relayLog('正在创建云端房间...', 'var(--orange)');
+
+  try {
+    const init = serializableState();
+    init._seq = 0;
+    init._room = roomId;
+
+    const resp = await fetch(CLOUD_API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify(init),
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const loc = resp.headers.get('Location');
+    cloudBlobId = loc.split('/').pop();
+    relayLog('云端房间创建成功 ID: ' + cloudBlobId, 'var(--green)');
+
+    startCloudSession('red');
+  } catch(e) {
+    relayLog('创建失败：' + (e.message || '网络错误'), 'var(--red)');
+  }
+}
+
+async function cloudJoin() {
+  const blobId = $('relayRoomId').value.trim();
+  if (!blobId) { relayLog('请输入云端房间号', 'var(--red)'); return; }
+  cloudBlobId = blobId;
+  relayLog('正在加入云端房间...', 'var(--orange)');
+
+  try {
+    const resp = await fetch(CLOUD_API + '/' + cloudBlobId);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const remote = await resp.json();
+    cloudSeq = remote._seq || 0;
+    mergeRemoteState(remote);
+    relayLog('已加入云端房间', 'var(--green)');
+
+    startCloudSession('blue');
+  } catch(e) {
+    relayLog('加入失败：' + (e.message || '房间不存在或网络错误'), 'var(--red)');
+    cloudBlobId = null;
+  }
+}
+
+function startCloudSession(role) {
+  // 停止旧的连接
+  if (peerConn) { try { peerConn.close(); } catch(e) {} peerConn = null; }
+  closeManualPc();
+  if (mqttClient) { try { mqttClient.end(true); } catch(e) {} mqttClient = null; }
+
+  connType = 'cloud';
+  state.connection.connected = true;
+  state.connection.status = 'connected';
+  state.connection.ownPeerId = cloudBlobId.substring(0, 8);
+  state.role = role;
+  state.connection.connectionError = null;
+
+  updateConnectionUI();
+  updateDiceAvailability();
+  renderDice();
+  $('relayDisconnect').style.display = '';
+
+  // 保存房间信息
+  localStorage.setItem('relayRoom', JSON.stringify({
+    roomId: cloudBlobId,
+    role: role,
+    timestamp: Date.now(),
+    type: 'cloud',
+  }));
+
+  // 开始轮询
+  cloudPollLoop();
+}
+
+function cloudPollLoop() {
+  if (connType !== 'cloud' || !cloudBlobId) return;
+  cloudPollTimer = setTimeout(async () => {
+    try {
+      const resp = await fetch(CLOUD_API + '/' + cloudBlobId);
+      if (!resp.ok) { cloudPollLoop(); return; }
+      const remote = await resp.json();
+      if (remote._seq > cloudSeq) {
+        cloudSeq = remote._seq;
+        mergeRemoteState(remote);
+      }
+    } catch(e) { /* 忽略轮询错误 */ }
+    cloudPollLoop();
+  }, 1500);
+}
+
+async function cloudPush(msg) {
+  if (connType !== 'cloud' || !cloudBlobId) return;
+  cloudSeq++;
+  const state = serializableState();
+  state._seq = cloudSeq;
+  state._lastMsg = msg;
+
+  try {
+    await fetch(CLOUD_API + '/' + cloudBlobId, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(state),
+    });
+    console.log('[CLOUD] 推送成功 seq:', cloudSeq);
+  } catch(e) {
+    console.warn('[CLOUD] 推送失败:', e);
+    cloudSeq--; // 回退序号
+  }
+}
+
+function cloudDisconnect() {
+  connType = null;
+  if (cloudPollTimer) { clearTimeout(cloudPollTimer); cloudPollTimer = null; }
+  cloudBlobId = null;
+  cloudSeq = 0;
+  localStorage.removeItem('relayRoom');
+  state.connection.connected = false;
+  state.connection.status = 'disconnected';
+  state.connection.ownPeerId = null;
+  updateConnectionUI();
+  renderDice();
+  $('relayDisconnect').style.display = 'none';
+  relayLog('已断开云端连接', 'var(--text2)');
+}
+
 // ==================== PeerJS ====================
 let peer = null;
 let peerConn = null;
@@ -1508,6 +1669,11 @@ function setupConnection(conn) {
 
 function sendMsg(payload) {
   console.log('[SEND] 发送:', payload.type, 'connType:', connType);
+  // HTTP 云端同步模式
+  if (connType === 'cloud') {
+    cloudPush(payload);
+    return;
+  }
   // MQTT 中继模式
   if (connType === 'relay') {
     publishRelay(payload);
@@ -1571,6 +1737,8 @@ function disconnectPeer() {
   if (peerConn) { peerConn.close(); peerConn = null; }
   if (manualPc) { manualPc.close(); manualPc = null; manualDc = null; }
   if (mqttClient) { try { mqttClient.end(); } catch(e) {} mqttClient = null; mqttRoomId = null; mqttSenderId = null; }
+  if (cloudPollTimer) { clearTimeout(cloudPollTimer); cloudPollTimer = null; }
+  cloudBlobId = null; cloudSeq = 0;
   localStorage.removeItem('relayRoom');
   state.connection.connected = false;
   state.connection.status = 'disconnected';
@@ -2091,7 +2259,14 @@ function bindEvents() {
   });
   $('relayCreateRoom').addEventListener('click', relayCreateRoom);
   $('relayJoinRoom').addEventListener('click', relayJoinRoom);
-  $('relayDisconnect').addEventListener('click', disconnectRelay);
+  $('relayDisconnect').addEventListener('click', () => {
+    if (connType === 'cloud') cloudDisconnect();
+    else disconnectRelay();
+  });
+
+  // 云端同步
+  $('cloudCreate').addEventListener('click', cloudCreate);
+  $('cloudJoin').addEventListener('click', cloudJoin);
 
   // 棋盘cell点击 → 打开编辑弹窗
   $('board-scroll').addEventListener('click', e => {
@@ -2142,7 +2317,17 @@ function autoReconnectRelay() {
       localStorage.removeItem('relayRoom');
       return;
     }
-    // 等待 MQTT.js 加载（最多等 5 秒）
+
+    // 云端同步重连
+    if (saved.type === 'cloud') {
+      cloudBlobId = saved.roomId;
+      cloudSeq = 0;
+      startCloudSession(saved.role);
+      $('relayConnOverlay').classList.add('show');
+      return;
+    }
+
+    // MQTT 重连
     if (typeof mqtt === 'undefined') {
       let retries = 0;
       const wait = setInterval(() => {
