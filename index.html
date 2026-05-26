@@ -408,7 +408,10 @@ body {
         <button class="btn-apply" id="applyPeerServerBtn">应用服务器配置</button>
       </div>
       <div style="font-size:10px;color:var(--text2);">
-        常用备选: host=peerjs-server.herokuapp.com, port=443, path=/
+        如果连接失败，依次尝试以下服务器：<br>
+        ① host=<b>0.peerjs.com</b> port=443 (默认)<br>
+        ② host=<b>peerjs-server.herokuapp.com</b> port=443 <br>
+        ⚠ 双方必须使用<b>相同的</b>服务器地址才能连接。改完后需刷新页面。
       </div>
     </div>
   </div>
@@ -516,7 +519,7 @@ function defaultState() {
       blue: { value: null, face: '?', available: false },
     },
     game: { winner: null, gameOver: false, lastMovedBy: null, lastMoveAmount: 0 },
-    connection: { ownPeerId: null, remotePeerId: null, connected: false, status: 'disconnected' },
+    connection: { ownPeerId: null, remotePeerId: null, connected: false, status: 'disconnected', connectionError: null },
     role: null,
   };
 }
@@ -764,10 +767,14 @@ function updateConnectionUI() {
     case 'connecting':
       s.classList.add('status-connecting'); s.textContent = '连接中...'; break;
     case 'error':
-      s.classList.add('status-err'); s.textContent = '连接失败'; break;
+      s.classList.add('status-err');
+      s.textContent = state.connection.connectionError || '连接失败';
+      break;
     default:
       s.classList.add('status-off'); s.textContent = '未连接'; break;
   }
+  // 鼠标悬浮显示完整错误
+  s.title = state.connection.connectionError || '';
 
   if (!state.connection.connected && !state.game.gameOver) {
     state.dice.red.available = false;
@@ -1008,12 +1015,24 @@ function initPeer() {
     peer = new Peer(cfg);
   } catch(e) {
     state.connection.status = 'error';
+    state.connection.connectionError = 'PeerJS 初始化失败，请检查服务器配置';
     updateConnectionUI();
     return;
   }
 
+  // 15 秒超时 - 如果 PeerServer 连不上
+  let openTimeout = setTimeout(() => {
+    if (!state.connection.ownPeerId) {
+      state.connection.status = 'error';
+      state.connection.connectionError = '无法连接 PeerServer，请尝试更换服务器地址';
+      updateConnectionUI();
+    }
+  }, 15000);
+
   peer.on('open', id => {
+    clearTimeout(openTimeout);
     state.connection.ownPeerId = id;
+    state.connection.connectionError = null;
     updateConnectionUI();
   });
 
@@ -1028,7 +1047,6 @@ function initPeer() {
     state.connection.remotePeerId = conn.peer;
     state.role = 'blue';
     setupConnection(conn);
-    // 被连方发送完整状态
     sendMsg({ type: 'GAME_STATE_FULL', state: serializableState() });
     updateConnectionUI();
     updateDiceAvailability();
@@ -1036,15 +1054,27 @@ function initPeer() {
   });
 
   peer.on('disconnected', () => {
+    state.connection.status = 'connecting';
+    state.connection.connectionError = '与服务器断开，正在重连...';
+    updateConnectionUI();
     if (peer && !peer.destroyed) peer.reconnect();
   });
 
   peer.on('error', err => {
     console.error('PeerJS error:', err);
-    if (err.type === 'unavailable-id' || err.type === 'invalid-id') {
-      state.connection.status = 'error';
-      updateConnectionUI();
+    state.connection.status = 'error';
+    if (err.type === 'server-error') {
+      state.connection.connectionError = '服务器拒绝连接，请更换 PeerServer 地址';
+    } else if (err.type === 'peer-unavailable') {
+      state.connection.connectionError = '未找到对方，请确认对方的 Peer ID 正确且在线';
+    } else if (err.type === 'network') {
+      state.connection.connectionError = '网络错误，请检查网络连接';
+    } else if (err.type === 'webrtc') {
+      state.connection.connectionError = 'WebRTC 连接失败，可能网络限制了 P2P';
+    } else {
+      state.connection.connectionError = '连接错误: ' + (err.message || err.type);
     }
+    updateConnectionUI();
   });
 }
 
@@ -1052,25 +1082,41 @@ function connectToPeer() {
   const remoteId = $('remotePeerId').value.trim();
   if (!remoteId) { alert('请输入对方的 Peer ID'); return; }
   if (remoteId === state.connection.ownPeerId) { alert('不能连接自己'); return; }
-  if (!state.connection.ownPeerId) { alert('自己的 Peer ID 尚未生成，请稍候'); return; }
+  if (!state.connection.ownPeerId) { alert('自己的 Peer ID 尚未生成，请稍候再试'); return; }
 
   state.connection.status = 'connecting';
+  state.connection.connectionError = null;
   updateConnectionUI();
 
   const conn = peer.connect(remoteId, { reliable: true });
+
+  // 连接超时
+  let connTimeout = setTimeout(() => {
+    if (!state.connection.connected) {
+      state.connection.status = 'error';
+      state.connection.connectionError = '连接超时 - 请确认双方使用相同的 PeerServer 地址，且网络互通';
+      updateConnectionUI();
+      conn.close();
+    }
+  }, 20000);
+
   conn.on('open', () => {
+    clearTimeout(connTimeout);
     peerConn = conn;
     state.connection.connected = true;
     state.connection.status = 'connected';
     state.connection.remotePeerId = remoteId;
     state.role = 'red';
+    state.connection.connectionError = null;
     setupConnection(conn);
     updateConnectionUI();
     updateDiceAvailability();
     renderDice();
   });
   conn.on('error', err => {
+    clearTimeout(connTimeout);
     state.connection.status = 'error';
+    state.connection.connectionError = '连接失败: ' + (err.message || '未知错误');
     updateConnectionUI();
   });
 }
