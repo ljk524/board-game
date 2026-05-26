@@ -1256,9 +1256,18 @@ let manualDc = null;   // RTCDataChannel
 
 const ICE_SERVERS = {
   iceServers: [
+    // 国内 STUN
+    { urls: 'stun:stun.qq.com:3478' },
+    { urls: 'stun:stun.miwifi.com:3478' },
+    // 国际 STUN（VPN 后可用）
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
-  ]
+    // Metered.ca 免费 TURN（中继服务器，NAT 穿透失败时自动切换）
+    { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+    { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+  ],
+  iceTransportPolicy: 'all',
+  iceCandidatePoolSize: 2,
 };
 
 function openManualConnect() {
@@ -1416,11 +1425,11 @@ async function acceptManualAnswer() {
         manualDc.addEventListener('close', onClose, { once: true });
         manualDc.addEventListener('error', onError, { once: true });
       }
-      setTimeout(() => { resolve(false); }, 10000);
+      setTimeout(() => { resolve(false); }, 15000);
     });
 
     if (!connected) {
-      alert('连接超时，可能网络不通。\n\n请尝试：\n1. 双方在同一 WiFi 下\n2. 关闭后重试一次');
+      alert('连接超时（15秒）。\n\n可能原因：\n1. 双方网络无法直连，且 TURN 中继不通\n2. 如果开了 VPN，请确认双方都用 VPN\n3. 关闭弹窗后重试一次');
     }
   }
 
