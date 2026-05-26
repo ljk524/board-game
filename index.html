@@ -331,6 +331,13 @@ body {
     <div class="settings-row">
       <textarea id="cfgCells" placeholder='{"5":{"text":"陷阱","image":"💀"},"10":{"text":"宝箱","image":"📦"}}'></textarea>
     </div>
+    <div class="settings-row" style="background:var(--bg);padding:10px;border-radius:var(--radius);">
+      <label style="font-weight:600;color:var(--text);">格子图片上传：</label>
+      <label>格子编号</label><input type="number" id="cfgImgCell" min="1" max="500" value="1" style="width:60px;">
+      <input type="file" id="cfgImgFile" accept="image/*" style="display:none;">
+      <button class="btn-apply" id="cfgImgBtn" style="background:var(--purple);">选择图片</button>
+      <span id="cfgImgStatus" style="font-size:11px;color:var(--text2);"></span>
+    </div>
     <div class="settings-row">
       <button class="btn-apply" id="applySettingsBtn">应用并同步</button>
       <button class="btn-reset" id="resetGameBtn">重置游戏</button>
@@ -1042,6 +1049,35 @@ function bindEvents() {
   });
 
   $('applySettingsBtn').addEventListener('click', applySettings);
+
+  // 图片上传
+  $('cfgImgBtn').addEventListener('click', () => {
+    $('cfgImgFile').click();
+  });
+  $('cfgImgFile').addEventListener('change', () => {
+    const file = $('cfgImgFile').files[0];
+    if (!file) return;
+    const cellNum = parseInt($('cfgImgCell').value) || 1;
+    $('cfgImgStatus').textContent = '正在转换...';
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      const dataUrl = e.target.result;
+      // 读取并更新 JSON
+      let cells = {};
+      const raw = $('cfgCells').value.trim();
+      if (raw) {
+        try { cells = JSON.parse(raw); } catch(_) { cells = {}; }
+      }
+      if (!cells[cellNum]) cells[cellNum] = {};
+      cells[cellNum].image = dataUrl;
+      $('cfgCells').value = JSON.stringify(cells, null, 2);
+      $('cfgImgStatus').textContent = '已添加 → 格子 ' + cellNum;
+      $('cfgImgFile').value = '';
+    };
+    reader.readAsDataURL(file);
+  });
+
   $('resetGameBtn').addEventListener('click', () => {
     if (confirm('确定要重置游戏吗？棋子将回到起点。')) {
       resetGameState();
