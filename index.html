@@ -2142,6 +2142,22 @@ function autoReconnectRelay() {
       localStorage.removeItem('relayRoom');
       return;
     }
+    // 等待 MQTT.js 加载（最多等 5 秒）
+    if (typeof mqtt === 'undefined') {
+      let retries = 0;
+      const wait = setInterval(() => {
+        retries++;
+        if (typeof mqtt !== 'undefined') {
+          clearInterval(wait);
+          connectMQTT(saved.roomId, saved.role);
+          $('relayConnOverlay').classList.add('show');
+        } else if (retries >= 25) {
+          clearInterval(wait);
+          console.warn('MQTT.js 加载超时，放弃自动重连');
+        }
+      }, 200);
+      return;
+    }
     connectMQTT(saved.roomId, saved.role);
     $('relayConnOverlay').classList.add('show');
   } catch(e) {
