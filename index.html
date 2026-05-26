@@ -365,6 +365,7 @@ body {
     <input type="text" id="remotePeerId" placeholder="输入对方 Peer ID">
     <button class="btn-connect" id="connectBtn">连接</button>
     <button class="btn-disconnect" id="disconnectBtn" style="display:none">断开</button>
+    <button class="btn-connect" id="manualConnectBtn" style="background:var(--purple);">手动</button>
     <span id="conn-status" class="status-off">未连接</span>
   </div>
 
@@ -484,6 +485,42 @@ body {
         <button class="btn-save" id="cellEditSave">保存</button>
         <button class="btn-del" id="cellEditDelete">清除此格</button>
         <button class="btn-secondary" id="cellEditCancel">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 手动连接弹窗 -->
+  <div class="modal-overlay" id="manualConnOverlay">
+    <div class="modal-box">
+      <h3>手动连接（无需服务器）</h3>
+      <p style="font-size:12px;color:var(--text2);margin-bottom:12px;">
+        当 PeerJS 服务器连不上时，用此方式。双方复制粘贴连接码即可。
+      </p>
+
+      <!-- 步骤1: 生成/粘贴 offer -->
+      <div id="manualStep1">
+        <div class="btn-row">
+          <button class="btn-save" id="manualCreateOffer">创建连接码</button>
+        </div>
+        <p style="font-size:11px;color:var(--text2);margin:8px 0;">创建后把连接码发给对方</p>
+        <textarea id="manualOfferText" readonly style="width:100%;height:60px;font-size:10px;font-family:monospace;background:var(--bg);color:var(--text);border:1px solid #444;border-radius:var(--radius);padding:6px;resize:none;display:none;" placeholder="创建后此处显示连接码..."></textarea>
+        <button class="btn-secondary" id="manualCopyOffer" style="display:none;margin-top:4px;">复制连接码</button>
+      </div>
+
+      <!-- 分割线 -->
+      <hr style="border:none;border-top:1px solid #333;margin:16px 0;" id="manualHr">
+
+      <!-- 步骤2: 粘贴对方的回复码 -->
+      <div id="manualStep2">
+        <p style="font-size:12px;color:var(--text2);margin-bottom:6px;">粘贴对方的回复码：</p>
+        <textarea id="manualAnswerText" style="width:100%;height:60px;font-size:10px;font-family:monospace;background:var(--bg);color:var(--text);border:1px solid #444;border-radius:var(--radius);padding:6px;resize:none;" placeholder="把对方发来的回复码粘贴到这里..."></textarea>
+        <div class="btn-row" style="margin-top:8px;">
+          <button class="btn-save" id="manualAcceptAnswer">确认回复码</button>
+        </div>
+      </div>
+
+      <div class="btn-row" style="margin-top:16px;">
+        <button class="btn-secondary" id="manualConnCancel">关闭</button>
       </div>
     </div>
   </div>
@@ -1201,6 +1238,7 @@ function handleMessage(msg) {
 
 function disconnectPeer() {
   if (peerConn) { peerConn.close(); peerConn = null; }
+  if (manualPc) { manualPc.close(); manualPc = null; manualDc = null; }
   state.connection.connected = false;
   state.connection.status = 'disconnected';
   state.connection.remotePeerId = null;
@@ -1209,6 +1247,170 @@ function disconnectPeer() {
   state.dice.blue.available = false;
   updateConnectionUI();
   renderDice();
+}
+
+// ==================== 手动 WebRTC 连接（无需服务器） ====================
+let manualPc = null;   // RTCPeerConnection
+let manualDc = null;   // RTCDataChannel
+
+const ICE_SERVERS = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+  ]
+};
+
+function openManualConnect() {
+  $('manualOfferText').style.display = 'none';
+  $('manualOfferText').value = '';
+  $('manualCopyOffer').style.display = 'none';
+  $('manualAnswerText').value = '';
+  $('manualConnOverlay').classList.add('show');
+}
+
+function closeManualConnect() {
+  $('manualConnOverlay').classList.remove('show');
+}
+
+async function createManualOffer() {
+  closeManualPc();
+  manualPc = new RTCPeerConnection(ICE_SERVERS);
+
+  manualDc = manualPc.createDataChannel('game', { ordered: true });
+  manualDc.onopen = () => { onManualConnected(); };
+  manualDc.onmessage = e => { handleMessage(JSON.parse(e.data)); };
+  manualDc.onclose = () => { handleManualDisconnect(); };
+  manualDc.onerror = () => { handleManualDisconnect(); };
+
+  manualPc.onicecandidate = e => {};
+  manualPc.ondatachannel = e => {
+    manualDc = e.channel;
+    manualDc.onopen = () => { onManualConnected(); };
+    manualDc.onmessage = ev => { handleMessage(JSON.parse(ev.data)); };
+    manualDc.onclose = () => { handleManualDisconnect(); };
+    manualDc.onerror = () => { handleManualDisconnect(); };
+  };
+
+  const offer = await manualPc.createOffer();
+  await manualPc.setLocalDescription(offer);
+
+  // 等待 ICE 收集完成
+  await new Promise(resolve => {
+    if (manualPc.iceGatheringState === 'complete') resolve();
+    else manualPc.onicegatheringstatechange = () => {
+      if (manualPc.iceGatheringState === 'complete') resolve();
+    };
+  });
+
+  const connData = JSON.stringify({
+    type: 'offer',
+    sdp: manualPc.localDescription.sdp,
+  });
+  $('manualOfferText').value = connData;
+  $('manualOfferText').style.display = 'block';
+  $('manualCopyOffer').style.display = '';
+  $('manualAnswerText').value = '';
+}
+
+async function acceptManualAnswer() {
+  if (!manualPc) {
+    // 作为接收方：没有 manualPc 时，先检查有没有 offer 数据
+    const answerText = $('manualAnswerText').value.trim();
+    if (!answerText) { alert('请先粘贴对方的回复码'); return; }
+    try {
+      const data = JSON.parse(answerText);
+      if (data.type !== 'offer') { alert('格式错误：需要对方的连接码（offer）'); return; }
+      await receiveManualOffer(data);
+    } catch(e) { alert('回复码格式错误：' + e.message); return; }
+  } else {
+    // 作为发码方：接收 answer
+    const answerText = $('manualAnswerText').value.trim();
+    if (!answerText) { alert('请粘贴对方发来的回复码'); return; }
+    try {
+      const data = JSON.parse(answerText);
+      if (data.type !== 'answer') { alert('格式错误：需要回复码（answer）'); return; }
+      await manualPc.setRemoteDescription(new RTCSessionDescription(data));
+      // 连接会自动建立
+    } catch(e) { alert('回复码格式错误：' + e.message); return; }
+  }
+}
+
+async function receiveManualOffer(data) {
+  closeManualPc();
+  manualPc = new RTCPeerConnection(ICE_SERVERS);
+
+  manualPc.ondatachannel = e => {
+    manualDc = e.channel;
+    manualDc.onopen = () => { onManualConnected(); };
+    manualDc.onmessage = ev => { handleMessage(JSON.parse(ev.data)); };
+    manualDc.onclose = () => { handleManualDisconnect(); };
+    manualDc.onerror = () => { handleManualDisconnect(); };
+  };
+
+  manualPc.onicecandidate = e => {};
+  await manualPc.setRemoteDescription(new RTCSessionDescription(data));
+  const answer = await manualPc.createAnswer();
+  await manualPc.setLocalDescription(answer);
+
+  await new Promise(resolve => {
+    if (manualPc.iceGatheringState === 'complete') resolve();
+    else manualPc.onicegatheringstatechange = () => {
+      if (manualPc.iceGatheringState === 'complete') resolve();
+    };
+  });
+
+  const answerData = JSON.stringify({
+    type: 'answer',
+    sdp: manualPc.localDescription.sdp,
+  });
+  $('manualAnswerText').value = answerData;
+
+  // 对方需要复制这个回复码发给发码方
+  const sel = document.activeElement;
+  $('manualAnswerText').focus();
+  $('manualAnswerText').select();
+  document.execCommand('copy');
+  alert('回复码已复制！请发给对方。对方粘贴后点「确认回复码」即可连接。');
+  if (sel) sel.focus();
+}
+
+function onManualConnected() {
+  peerConn = manualDc;
+  state.connection.connected = true;
+  state.connection.status = 'connected';
+  state.role = manualPc.localDescription.type === 'offer' ? 'red' : 'blue';
+  state.connection.connectionError = null;
+
+  // 同步初始状态：接收方发送自己的棋盘配置给发码方
+  if (state.role === 'blue') {
+    sendMsg({ type: 'GAME_STATE_FULL', state: serializableState() });
+  }
+
+  updateConnectionUI();
+  updateDiceAvailability();
+  renderDice();
+  closeManualConnect();
+}
+
+function handleManualDisconnect() {
+  if (peerConn === manualDc) peerConn = null;
+  state.connection.connected = false;
+  state.connection.status = 'disconnected';
+  state.connection.connectionError = null;
+  updateConnectionUI();
+  renderDice();
+}
+
+function closeManualPc() {
+  if (manualPc) { manualPc.close(); manualPc = null; }
+  if (manualDc) { manualDc.close(); manualDc = null; }
+}
+
+function copyManualOffer() {
+  const ta = $('manualOfferText');
+  ta.select();
+  document.execCommand('copy');
+  alert('连接码已复制！发给对方。对方粘贴后点「确认回复码」。');
 }
 
 // ==================== 全部渲染 ====================
@@ -1420,6 +1622,16 @@ function bindEvents() {
       sendMsg({ type: 'GAME_RESET' });
     }
   });
+
+  // 手动连接
+  $('manualConnectBtn').addEventListener('click', openManualConnect);
+  $('manualConnCancel').addEventListener('click', closeManualConnect);
+  $('manualConnOverlay').addEventListener('click', e => {
+    if (e.target === $('manualConnOverlay')) closeManualConnect();
+  });
+  $('manualCreateOffer').addEventListener('click', createManualOffer);
+  $('manualAcceptAnswer').addEventListener('click', acceptManualAnswer);
+  $('manualCopyOffer').addEventListener('click', copyManualOffer);
 
   // 棋盘cell点击 → 打开编辑弹窗
   $('board-scroll').addEventListener('click', e => {
