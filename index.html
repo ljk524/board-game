@@ -494,7 +494,7 @@ body {
     <div class="modal-box">
       <h3>手动连接（无需服务器）</h3>
       <p style="font-size:12px;color:var(--text2);margin-bottom:12px;">
-        当 PeerJS 服务器连不上时，用此方式。双方复制粘贴连接码即可。
+        当 PeerJS 服务器连不上时，用此方式。<br><b style="color:var(--accent);">流程：</b>一方点「创建连接码」发给对方 → 对方粘贴到下方输入框点确认 → 自动生成回复码发回来 → 再粘贴回复码点确认 → 连接成功
       </p>
 
       <!-- 步骤1: 生成/粘贴 offer -->
@@ -502,7 +502,7 @@ body {
         <div class="btn-row">
           <button class="btn-save" id="manualCreateOffer">创建连接码</button>
         </div>
-        <p style="font-size:11px;color:var(--text2);margin:8px 0;">创建后把连接码发给对方</p>
+        <p style="font-size:11px;color:var(--text2);margin:8px 0;">任一方点此创建连接码，然后把码发给对方</p>
         <textarea id="manualOfferText" readonly style="width:100%;height:60px;font-size:10px;font-family:monospace;background:var(--bg);color:var(--text);border:1px solid #444;border-radius:var(--radius);padding:6px;resize:none;display:none;" placeholder="创建后此处显示连接码..."></textarea>
         <button class="btn-secondary" id="manualCopyOffer" style="display:none;margin-top:4px;">复制连接码</button>
       </div>
@@ -512,10 +512,10 @@ body {
 
       <!-- 步骤2: 粘贴对方的回复码 -->
       <div id="manualStep2">
-        <p style="font-size:12px;color:var(--text2);margin-bottom:6px;">粘贴对方的回复码：</p>
-        <textarea id="manualAnswerText" style="width:100%;height:60px;font-size:10px;font-family:monospace;background:var(--bg);color:var(--text);border:1px solid #444;border-radius:var(--radius);padding:6px;resize:none;" placeholder="把对方发来的回复码粘贴到这里..."></textarea>
+        <p style="font-size:12px;color:var(--text2);margin-bottom:6px;">输入对方发来的码（连接码或回复码）：</p>
+        <textarea id="manualAnswerText" style="width:100%;height:60px;font-size:10px;font-family:monospace;background:var(--bg);color:var(--text);border:1px solid #444;border-radius:var(--radius);padding:6px;resize:none;" placeholder="把对方发来的码粘贴到这里..."></textarea>
         <div class="btn-row" style="margin-top:8px;">
-          <button class="btn-save" id="manualAcceptAnswer">确认回复码</button>
+          <button class="btn-save" id="manualAcceptAnswer">确认连接</button>
         </div>
       </div>
 
@@ -1324,7 +1324,7 @@ async function acceptManualAnswer() {
   if (!manualPc) {
     // 作为接收方：没有 manualPc 时，先检查有没有 offer 数据
     const answerText = $('manualAnswerText').value.trim();
-    if (!answerText) { alert('请先粘贴对方的回复码'); return; }
+    if (!answerText) { alert('请先粘贴对方发来的码'); return; }
     try {
       const data = JSON.parse(answerText);
       if (data.type !== 'offer') { alert('格式错误：需要对方的连接码（offer）'); return; }
@@ -1381,7 +1381,7 @@ async function receiveManualOffer(data) {
     $('manualAnswerText').focus();
     $('manualAnswerText').select();
     document.execCommand('copy');
-    alert('回复码已复制！请发给对方。对方粘贴后点「确认回复码」即可连接。');
+    alert('回复码已复制！请发给对方。对方粘贴后点「确认连接」即可完成。');
     if (sel) sel.focus();
   } catch(e) {
     alert('接收连接码失败：' + (e.message || '未知错误'));
@@ -1425,7 +1425,7 @@ function copyManualOffer() {
   const ta = $('manualOfferText');
   ta.select();
   document.execCommand('copy');
-  alert('连接码已复制！发给对方。对方粘贴后点「确认回复码」。');
+  alert('连接码已复制！发给对方。对方粘贴后点「确认连接」，再把得到的回复码发回来。');
 }
 
 // ==================== 全部渲染 ====================
