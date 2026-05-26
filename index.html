@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>双人联机棋盘游戏</title>
 <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.2/dist/peerjs.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/mqtt@4.3.7/dist/mqtt.min.js"></script>
+<script src="https://cdn.bootcdn.net/ajax/libs/mqtt/4.3.7/mqtt.min.js"
+        onerror="var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/mqtt@4.3.7/dist/mqtt.min.js';document.head.appendChild(s);">
+</script>
 <style>
 /* ===== 全局样式 ===== */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -969,6 +971,7 @@ function rollDice(color) {
 
     // 同步给对端
     if (state.connection.connected) {
+      console.log('[ROLL] 同步骰子结果:', color, val, '位置:', prevPos, '->', newPos);
       sendMsg({
         type: 'DICE_ROLL',
         dice: color,
@@ -1116,6 +1119,7 @@ function applyPeerServerConfig() {
 // ==================== MQTT 中继连接 ====================
 let mqttClient = null;
 let mqttRoomId = null;
+let mqttSenderId = null;  // 用于消息去重
 let connType = null; // 'peerjs' | 'manual' | 'relay' | null
 const MQTT_BROKERS = [
   'wss://broker-cn.emqx.io:8084/mqtt',   // EMQX 中国
@@ -1170,9 +1174,9 @@ function connectMQTT(roomId, role) {
 
   mqttRoomId = roomId;
   mqttBrokerIdx = 0;
-  const clientId = 'bg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+  mqttSenderId = 'bg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
 
-  tryConnectBroker(roomId, role, clientId);
+  tryConnectBroker(roomId, role, mqttSenderId);
 }
 
 function tryConnectBroker(roomId, role, clientId) {
@@ -1182,7 +1186,7 @@ function tryConnectBroker(roomId, role, clientId) {
     return;
   }
   const broker = MQTT_BROKERS[mqttBrokerIdx];
-  console.log('尝试连接 MQTT:', broker);
+  console.log('[MQTT] 尝试连接服务器 ' + (mqttBrokerIdx + 1) + '/' + MQTT_BROKERS.length + ':', broker);
 
   // 连接超时
   let connTimer = setTimeout(() => {
@@ -1223,9 +1227,10 @@ function tryConnectBroker(roomId, role, clientId) {
       }
 
       // 连接成功
+      console.log('[MQTT] 订阅成功，角色:', role, '房间:', roomId);
       state.connection.connected = true;
       state.connection.status = 'connected';
-      state.connection.ownPeerId = clientId.substring(0, 8);
+      state.connection.ownPeerId = mqttSenderId.substring(0, 8);
       state.role = role;
       state.connection.connectionError = null;
       connType = 'relay';
@@ -1255,18 +1260,21 @@ function tryConnectBroker(roomId, role, clientId) {
   mqttClient.on('message', (topic, message) => {
     try {
       const msg = JSON.parse(message.toString());
-      if (msg._senderId === clientId) return; // 忽略自己的消息
+      // 忽略自己的消息
+      if (msg._senderId === mqttSenderId) return;
+      console.log('[MQTT] 收到:', msg.type, msg._senderId ? '来自:' + msg._senderId.substring(0, 10) : '');
       // 收到对方消息
       if (msg.type === 'PLAYER_JOIN') {
         $('relayStatus').textContent = '已连接（房间 ' + roomId + '，' + (role === 'red' ? '红方' : '蓝方') + '）对方已在线';
         // 只有红方（创建者）回复游戏状态，确保状态权威
         if (role === 'red') {
+          console.log('[MQTT] 红方回复 GAME_STATE_FULL');
           publishRelay({ type: 'GAME_STATE_FULL', state: serializableState() });
         }
       }
       handleMessage(msg);
     } catch(e) {
-      console.warn('MQTT 消息解析失败:', e);
+      console.warn('[MQTT] 消息解析失败:', e);
     }
   });
 
@@ -1297,15 +1305,18 @@ function tryConnectBroker(roomId, role, clientId) {
 
 function publishRelay(msg) {
   if (!mqttClient || !mqttClient.connected) {
-    console.warn('MQTT 未连接，无法发送消息');
+    console.warn('[MQTT] 未连接，无法发送:', msg.type);
     return;
   }
-  msg._senderId = (mqttClient.options && mqttClient.options.clientId) || state.connection.ownPeerId;
+  msg._senderId = mqttSenderId;
   msg._ts = Date.now();
   try {
-    mqttClient.publish('boardgame/' + mqttRoomId, JSON.stringify(msg), { qos: 0 });
+    const topic = 'boardgame/' + mqttRoomId;
+    const payload = JSON.stringify(msg);
+    console.log('[MQTT] 发送:', msg.type, '长度:', payload.length);
+    mqttClient.publish(topic, payload, { qos: 1 });
   } catch(e) {
-    console.warn('MQTT 发送失败:', e);
+    console.warn('[MQTT] 发送失败:', e);
   }
 }
 
@@ -1316,6 +1327,7 @@ function disconnectRelay() {
     mqttClient = null;
   }
   mqttRoomId = null;
+  mqttSenderId = null;
   localStorage.removeItem('relayRoom');
   state.connection.connected = false;
   state.connection.status = 'disconnected';
@@ -1495,21 +1507,23 @@ function setupConnection(conn) {
 }
 
 function sendMsg(payload) {
+  console.log('[SEND] 发送:', payload.type, 'connType:', connType);
   // MQTT 中继模式
   if (connType === 'relay') {
     publishRelay(payload);
     return;
   }
   // PeerJS / 手动 WebRTC 模式
-  if (!peerConn) return;
+  if (!peerConn) { console.warn('[SEND] 无连接，无法发送'); return; }
   try {
     peerConn.send(JSON.stringify(payload));
   } catch(e) {
-    console.warn('发送消息失败:', e);
+    console.warn('[SEND] 发送失败:', e);
   }
 }
 
 function handleMessage(msg) {
+  console.log('[MSG] 处理:', msg.type);
   switch (msg.type) {
     case 'GAME_STATE_FULL':
       if (msg.state) mergeRemoteState(msg.state);
@@ -1556,7 +1570,7 @@ function disconnectPeer() {
   connType = null;
   if (peerConn) { peerConn.close(); peerConn = null; }
   if (manualPc) { manualPc.close(); manualPc = null; manualDc = null; }
-  if (mqttClient) { try { mqttClient.end(); } catch(e) {} mqttClient = null; mqttRoomId = null; }
+  if (mqttClient) { try { mqttClient.end(); } catch(e) {} mqttClient = null; mqttRoomId = null; mqttSenderId = null; }
   localStorage.removeItem('relayRoom');
   state.connection.connected = false;
   state.connection.status = 'disconnected';
