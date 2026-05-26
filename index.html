@@ -1273,43 +1273,51 @@ function closeManualConnect() {
 }
 
 async function createManualOffer() {
-  closeManualPc();
-  manualPc = new RTCPeerConnection(ICE_SERVERS);
+  try {
+    closeManualPc();
+    manualPc = new RTCPeerConnection(ICE_SERVERS);
 
-  manualDc = manualPc.createDataChannel('game', { ordered: true });
-  manualDc.onopen = () => { onManualConnected(); };
-  manualDc.onmessage = e => { handleMessage(JSON.parse(e.data)); };
-  manualDc.onclose = () => { handleManualDisconnect(); };
-  manualDc.onerror = () => { handleManualDisconnect(); };
-
-  manualPc.onicecandidate = e => {};
-  manualPc.ondatachannel = e => {
-    manualDc = e.channel;
+    manualDc = manualPc.createDataChannel('game', { ordered: true });
     manualDc.onopen = () => { onManualConnected(); };
-    manualDc.onmessage = ev => { handleMessage(JSON.parse(ev.data)); };
+    manualDc.onmessage = e => { handleMessage(JSON.parse(e.data)); };
     manualDc.onclose = () => { handleManualDisconnect(); };
     manualDc.onerror = () => { handleManualDisconnect(); };
-  };
 
-  const offer = await manualPc.createOffer();
-  await manualPc.setLocalDescription(offer);
-
-  // 等待 ICE 收集完成
-  await new Promise(resolve => {
-    if (manualPc.iceGatheringState === 'complete') resolve();
-    else manualPc.onicegatheringstatechange = () => {
-      if (manualPc.iceGatheringState === 'complete') resolve();
+    manualPc.onicecandidate = e => {};
+    manualPc.ondatachannel = e => {
+      manualDc = e.channel;
+      manualDc.onopen = () => { onManualConnected(); };
+      manualDc.onmessage = ev => { handleMessage(JSON.parse(ev.data)); };
+      manualDc.onclose = () => { handleManualDisconnect(); };
+      manualDc.onerror = () => { handleManualDisconnect(); };
     };
-  });
 
-  const connData = JSON.stringify({
-    type: 'offer',
-    sdp: manualPc.localDescription.sdp,
-  });
-  $('manualOfferText').value = connData;
-  $('manualOfferText').style.display = 'block';
-  $('manualCopyOffer').style.display = '';
-  $('manualAnswerText').value = '';
+    const offer = await manualPc.createOffer();
+    await manualPc.setLocalDescription(offer);
+
+    // 最多等 3 秒收集 ICE candidate
+    await new Promise(resolve => {
+      let done = false;
+      const finish = () => { if (!done) { done = true; resolve(); } };
+      if (manualPc.iceGatheringState === 'complete') finish();
+      else manualPc.onicegatheringstatechange = () => {
+        if (manualPc.iceGatheringState === 'complete') finish();
+      };
+      setTimeout(finish, 3000);
+    });
+
+    const connData = JSON.stringify({
+      type: 'offer',
+      sdp: manualPc.localDescription.sdp,
+    });
+    $('manualOfferText').value = connData;
+    $('manualOfferText').style.display = 'block';
+    $('manualCopyOffer').style.display = '';
+    $('manualAnswerText').value = '';
+  } catch(e) {
+    alert('创建连接码失败：' + (e.message || '未知错误，请重试'));
+    console.error(e);
+  }
 }
 
 async function acceptManualAnswer() {
@@ -1336,42 +1344,49 @@ async function acceptManualAnswer() {
 }
 
 async function receiveManualOffer(data) {
-  closeManualPc();
-  manualPc = new RTCPeerConnection(ICE_SERVERS);
+  try {
+    closeManualPc();
+    manualPc = new RTCPeerConnection(ICE_SERVERS);
 
-  manualPc.ondatachannel = e => {
-    manualDc = e.channel;
-    manualDc.onopen = () => { onManualConnected(); };
-    manualDc.onmessage = ev => { handleMessage(JSON.parse(ev.data)); };
-    manualDc.onclose = () => { handleManualDisconnect(); };
-    manualDc.onerror = () => { handleManualDisconnect(); };
-  };
-
-  manualPc.onicecandidate = e => {};
-  await manualPc.setRemoteDescription(new RTCSessionDescription(data));
-  const answer = await manualPc.createAnswer();
-  await manualPc.setLocalDescription(answer);
-
-  await new Promise(resolve => {
-    if (manualPc.iceGatheringState === 'complete') resolve();
-    else manualPc.onicegatheringstatechange = () => {
-      if (manualPc.iceGatheringState === 'complete') resolve();
+    manualPc.ondatachannel = e => {
+      manualDc = e.channel;
+      manualDc.onopen = () => { onManualConnected(); };
+      manualDc.onmessage = ev => { handleMessage(JSON.parse(ev.data)); };
+      manualDc.onclose = () => { handleManualDisconnect(); };
+      manualDc.onerror = () => { handleManualDisconnect(); };
     };
-  });
 
-  const answerData = JSON.stringify({
-    type: 'answer',
-    sdp: manualPc.localDescription.sdp,
-  });
-  $('manualAnswerText').value = answerData;
+    manualPc.onicecandidate = e => {};
+    await manualPc.setRemoteDescription(new RTCSessionDescription(data));
+    const answer = await manualPc.createAnswer();
+    await manualPc.setLocalDescription(answer);
 
-  // 对方需要复制这个回复码发给发码方
-  const sel = document.activeElement;
-  $('manualAnswerText').focus();
-  $('manualAnswerText').select();
-  document.execCommand('copy');
-  alert('回复码已复制！请发给对方。对方粘贴后点「确认回复码」即可连接。');
-  if (sel) sel.focus();
+    await new Promise(resolve => {
+      let done = false;
+      const finish = () => { if (!done) { done = true; resolve(); } };
+      if (manualPc.iceGatheringState === 'complete') finish();
+      else manualPc.onicegatheringstatechange = () => {
+        if (manualPc.iceGatheringState === 'complete') finish();
+      };
+      setTimeout(finish, 3000);
+    });
+
+    const answerData = JSON.stringify({
+      type: 'answer',
+      sdp: manualPc.localDescription.sdp,
+    });
+    $('manualAnswerText').value = answerData;
+
+    const sel = document.activeElement;
+    $('manualAnswerText').focus();
+    $('manualAnswerText').select();
+    document.execCommand('copy');
+    alert('回复码已复制！请发给对方。对方粘贴后点「确认回复码」即可连接。');
+    if (sel) sel.focus();
+  } catch(e) {
+    alert('接收连接码失败：' + (e.message || '未知错误'));
+    console.error(e);
+  }
 }
 
 function onManualConnected() {
