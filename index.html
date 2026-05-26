@@ -184,24 +184,6 @@ body {
   background-color: #3a3a2a; border-color: #887700;
 }
 
-/* ===== 当前格子信息 ===== */
-#cell-info {
-  background: var(--surface); border-radius: var(--radius-lg);
-  padding: 14px 16px; margin-bottom: 8px; text-align: center;
-  min-height: 60px; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 4px;
-  border: 2px solid #333;
-}
-#cell-info .ci-image {
-  max-width: 80px; max-height: 50px; object-fit: contain; border-radius: 4px;
-}
-#cell-info .ci-text {
-  font-size: 16px; font-weight: 700; color: var(--text);
-}
-#cell-info .ci-meta {
-  font-size: 11px; color: var(--text2);
-}
-
 /* ===== 骰子区 ===== */
 #dice-area {
   display: flex; justify-content: center; gap: 20px;
@@ -273,6 +255,81 @@ body {
 }
 #footer a { color: var(--blue); text-decoration: none; }
 
+/* ===== 格子编辑弹窗 ===== */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 200; opacity: 0; pointer-events: none; transition: opacity 0.3s;
+}
+.modal-overlay.show { opacity: 1; pointer-events: auto; }
+.modal-box {
+  background: var(--surface); border-radius: var(--radius-lg);
+  padding: 20px; max-width: 360px; width: 90%; max-height: 90vh; overflow-y: auto;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+}
+.modal-box h3 { font-size: 16px; margin-bottom: 12px; text-align: center; }
+.modal-box .form-row {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+}
+.modal-box .form-row label { font-size: 13px; color: var(--text2); min-width: 50px; }
+.modal-box .form-row input[type="text"] {
+  flex: 1; padding: 8px 10px; border-radius: var(--radius); border: 1px solid #444;
+  background: var(--bg); color: var(--text); font-size: 13px;
+}
+.modal-box .form-row input[type="file"] { display: none; }
+.modal-box .btn-row { display: flex; gap: 8px; justify-content: center; margin-top: 14px; }
+.modal-box .btn-row button {
+  padding: 10px 20px; border: none; border-radius: var(--radius);
+  font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.btn-save { background: var(--blue); color: #fff; }
+.btn-del { background: var(--red-dark); color: #fff; }
+.btn-secondary { background: #555; color: #fff; }
+.modal-box .preview-img {
+  max-width: 100%; max-height: 120px; object-fit: contain; border-radius: var(--radius);
+  display: block; margin: 6px auto;
+}
+.modal-box .toggle-row {
+  display: flex; align-items: center; justify-content: center; gap: 10px; margin: 8px 0;
+}
+.toggle-switch {
+  width: 44px; height: 24px; background: #555; border-radius: 12px;
+  position: relative; cursor: pointer; transition: background 0.3s;
+}
+.toggle-switch.on { background: var(--purple); }
+.toggle-switch::after {
+  content: ''; position: absolute; top: 3px; left: 3px;
+  width: 18px; height: 18px; background: #fff; border-radius: 50%;
+  transition: left 0.3s;
+}
+.toggle-switch.on::after { left: 23px; }
+
+/* 格子信息栏（下方醒目显示） */
+#cell-info {
+  background: var(--surface); border-radius: var(--radius-lg);
+  padding: 16px; margin-top: 8px; text-align: center;
+  min-height: 80px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 6px;
+  border: 2px solid #444; transition: border-color 0.3s;
+}
+#cell-info .ci-image {
+  max-width: 120px; max-height: 80px; object-fit: contain; border-radius: 6px;
+}
+#cell-info .ci-text {
+  font-size: 18px; font-weight: 700; color: var(--text); line-height: 1.3;
+}
+#cell-info .ci-meta {
+  font-size: 12px; color: var(--text2);
+}
+
+/* 格子可编辑提示 */
+.cell { cursor: pointer; }
+.cell.editing { animation: pulse 1s infinite; }
+@keyframes pulse {
+  0%,100% { border-color: var(--purple); }
+  50% { border-color: #fff; }
+}
+
 /* ===== 响应式 ===== */
 @media (max-width: 600px) {
   :root { --dice-size: 90px; }
@@ -320,7 +377,7 @@ body {
       <label>终点:</label><input type="number" id="cfgEnd" min="2" value="100">
     </div>
     <div class="settings-row">
-      <label>后退区 (逗号分隔, 如 10,20,30):</label>
+      <label>后退区 (点击格子编辑开关更方便):</label>
       <input type="text" id="cfgRetreat" value="10,20,30,40,50,60,70,80,90" style="flex:1;min-width:200px;">
     </div>
     <div class="settings-row">
@@ -363,14 +420,14 @@ body {
     <span>方向: <strong id="stDirection">--</strong></span>
   </div>
 
+  <!-- 棋盘 -->
+  <div id="board-scroll"><div id="board-grid"></div></div>
+
   <!-- 当前格子信息 -->
   <div id="cell-info">
     <div class="ci-text" id="ciText">起点</div>
     <div class="ci-meta" id="ciMeta"></div>
   </div>
-
-  <!-- 棋盘 -->
-  <div id="board-scroll"><div id="board-grid"></div></div>
 
   <!-- 骰子区 -->
   <div id="dice-area">
@@ -393,6 +450,38 @@ body {
       <h2 id="winText">游戏结束</h2>
       <p id="winDetail"></p>
       <button id="playAgainBtn">再来一局</button>
+    </div>
+  </div>
+
+  <!-- 格子编辑弹窗 -->
+  <div class="modal-overlay" id="cellEditOverlay">
+    <div class="modal-box">
+      <h3 id="cellEditTitle">编辑格子 1</h3>
+      <div class="form-row">
+        <label>文字</label>
+        <input type="text" id="cellEditText" placeholder="棋子落到此格时显示的文字">
+      </div>
+      <div class="form-row">
+        <label>图片</label>
+        <input type="file" id="cellEditImgFile" accept="image/*" style="display:none;">
+        <button class="btn-save" id="cellEditImgBtn" style="padding:6px 12px;font-size:12px;">选择图片</button>
+        <button class="btn-secondary" id="cellEditImgClear" style="padding:6px 12px;font-size:12px;" title="清除图片">✕</button>
+      </div>
+      <img class="preview-img" id="cellEditPreview" style="display:none;">
+      <div class="form-row">
+        <label>emoji</label>
+        <input type="text" id="cellEditEmoji" placeholder="或者输入 emoji，如 🎁" maxlength="4">
+      </div>
+      <div class="toggle-row">
+        <span style="font-size:13px;">后退区</span>
+        <div class="toggle-switch" id="cellEditRetreat"></div>
+        <span style="font-size:12px;color:var(--text2);" id="cellEditRetreatLabel">关</span>
+      </div>
+      <div class="btn-row">
+        <button class="btn-save" id="cellEditSave">保存</button>
+        <button class="btn-del" id="cellEditDelete">清除此格</button>
+        <button class="btn-secondary" id="cellEditCancel">取消</button>
+      </div>
     </div>
   </div>
 
@@ -580,23 +669,34 @@ function updateCellInfo() {
   const isStart = pos === state.board.startCell;
   const isEnd = pos === state.board.endCell;
 
-  let displayText = text || '格子 ' + pos;
-  let meta = '';
-  if (isStart) meta = '起点';
-  if (isEnd) meta += (meta ? ' · ' : '') + '终点';
-  if (isRetreat) meta += (meta ? ' · ' : '') + '后退区';
+  let displayText = text || '（无内容）';
+  let meta = '格子 ' + pos;
+  if (isStart) meta += ' · 起点';
+  if (isEnd) meta += ' · 终点';
+  if (isRetreat) meta += ' · 后退区';
 
   $('ciText').textContent = displayText;
   $('ciMeta').textContent = meta;
 
-  // 如果有图片且是 URL，显示缩略图
+  // 有自定义内容时高亮边框
+  const ci = $('cell-info');
+  if (text || imgVal) {
+    ci.style.borderColor = 'var(--gold)';
+    ci.style.boxShadow = '0 0 12px rgba(255,215,0,0.2)';
+  } else {
+    ci.style.borderColor = '#444';
+    ci.style.boxShadow = 'none';
+  }
+
+  // 显示缩略图
   let imgEl = document.getElementById('ciImg');
-  if (imgVal && imgVal.startsWith('http')) {
+  const isImg = imgVal && (imgVal.startsWith('http') || imgVal.startsWith('data:'));
+  if (isImg) {
     if (!imgEl) {
       imgEl = document.createElement('img');
       imgEl.id = 'ciImg';
       imgEl.className = 'ci-image';
-      $('cell-info').insertBefore(imgEl, $('ciMeta'));
+      $('cell-info').insertBefore(imgEl, $('ciText'));
     }
     imgEl.src = imgVal;
     imgEl.style.display = '';
@@ -1073,6 +1173,136 @@ function renderAll() {
 }
 
 // ==================== 事件绑定 ====================
+// ==================== 格子编辑弹窗 ====================
+let cellEditNum = null;
+let cellEditTempImage = null;
+
+function openCellEdit(n) {
+  cellEditNum = n;
+  cellEditTempImage = null;
+  const cfg = state.board.cells[n] || {};
+  const imgVal = cfg.image || '';
+  const isUrl = imgVal && imgVal.startsWith('http') || imgVal && imgVal.startsWith('data:');
+
+  $('cellEditTitle').textContent = '编辑格子 ' + n;
+  $('cellEditText').value = cfg.text || '';
+
+  // 图片
+  if (isUrl) {
+    cellEditTempImage = imgVal;
+    $('cellEditPreview').src = imgVal;
+    $('cellEditPreview').style.display = 'block';
+  } else {
+    $('cellEditPreview').style.display = 'none';
+  }
+  // emoji
+  $('cellEditEmoji').value = (!isUrl && imgVal) ? imgVal : '';
+
+  // 后退区
+  const isRetreat = state.board.retreatZones.includes(n);
+  if (isRetreat) {
+    $('cellEditRetreat').classList.add('on');
+    $('cellEditRetreatLabel').textContent = '开';
+  } else {
+    $('cellEditRetreat').classList.remove('on');
+    $('cellEditRetreatLabel').textContent = '关';
+  }
+
+  $('cellEditOverlay').classList.add('show');
+  setTimeout(() => $('cellEditText').focus(), 100);
+}
+
+function closeCellEdit() {
+  $('cellEditOverlay').classList.remove('show');
+  cellEditNum = null;
+  cellEditTempImage = null;
+}
+
+function saveCellEdit() {
+  if (!cellEditNum) return;
+  const text = $('cellEditText').value.trim();
+  const emoji = $('cellEditEmoji').value.trim();
+  const isRetreat = $('cellEditRetreat').classList.contains('on');
+
+  // 确定图片：优先用上传的图，否则 emoji
+  let imageVal = null;
+  if (cellEditTempImage) {
+    imageVal = cellEditTempImage;
+  } else if (emoji) {
+    imageVal = emoji;
+  }
+
+  // 更新 cells
+  if (text || imageVal) {
+    if (!state.board.cells[cellEditNum]) state.board.cells[cellEditNum] = {};
+    state.board.cells[cellEditNum].text = text;
+    state.board.cells[cellEditNum].image = imageVal;
+  } else {
+    // 无文字无图片则删除
+    delete state.board.cells[cellEditNum];
+  }
+
+  // 更新后退区
+  const idx = state.board.retreatZones.indexOf(cellEditNum);
+  if (isRetreat && idx === -1) {
+    state.board.retreatZones.push(cellEditNum);
+    state.board.retreatZones.sort((a,b) => a-b);
+  } else if (!isRetreat && idx !== -1) {
+    state.board.retreatZones.splice(idx, 1);
+  }
+
+  // 同步到设置面板
+  syncStateToSettings();
+  saveBoardConfig();
+  updateDiceAvailability();
+  renderAll();
+
+  // 同步给对端
+  if (state.connection.connected && peerConn) {
+    sendMsg({
+      type: 'BOARD_CONFIG_UPDATE',
+      board: JSON.parse(JSON.stringify(state.board)),
+    });
+  }
+
+  closeCellEdit();
+}
+
+function deleteCellEdit() {
+  if (!cellEditNum) return;
+  if (!confirm('确定清除格子 ' + cellEditNum + ' 的所有设置？')) return;
+
+  delete state.board.cells[cellEditNum];
+  const idx = state.board.retreatZones.indexOf(cellEditNum);
+  if (idx !== -1) state.board.retreatZones.splice(idx, 1);
+
+  syncStateToSettings();
+  saveBoardConfig();
+  updateDiceAvailability();
+  renderAll();
+
+  if (state.connection.connected && peerConn) {
+    sendMsg({
+      type: 'BOARD_CONFIG_UPDATE',
+      board: JSON.parse(JSON.stringify(state.board)),
+    });
+  }
+
+  closeCellEdit();
+}
+
+function syncStateToSettings() {
+  $('cfgSize').value = state.board.size;
+  $('cfgStart').value = state.board.startCell;
+  $('cfgEnd').value = state.board.endCell;
+  $('cfgRetreat').value = state.board.retreatZones.join(',');
+  if (Object.keys(state.board.cells).length > 0) {
+    $('cfgCells').value = JSON.stringify(state.board.cells, null, 2);
+  } else {
+    $('cfgCells').value = '';
+  }
+}
+
 function bindEvents() {
   // 骰子
   $('redDice').addEventListener('click', () => rollDice('red'));
@@ -1145,30 +1375,42 @@ function bindEvents() {
     }
   });
 
-  // 棋盘cell点击（调试/快捷操作）
+  // 棋盘cell点击 → 打开编辑弹窗
   $('board-scroll').addEventListener('click', e => {
     const cell = e.target.closest('.cell');
     if (!cell) return;
     const cellNum = parseInt(cell.dataset.cell);
     if (isNaN(cellNum)) return;
+    openCellEdit(cellNum);
+  });
 
-    // Ctrl+点击：直接移动棋子到该格子（仅离线/调试用）
-    if (e.ctrlKey || e.metaKey) {
-      state.piece.prevPosition = state.piece.position;
-      state.piece.position = cellNum;
-      updateDiceAvailability();
-      checkWin();
-      renderAll();
-      if (state.connection.connected && peerConn) {
-        sendMsg({
-          type: 'DICE_ROLL',
-          dice: 'red',
-          roll: 0,
-          newPosition: cellNum,
-          prevPosition: state.piece.prevPosition,
-        });
-      }
-    }
+  // 格子编辑弹窗事件
+  $('cellEditSave').addEventListener('click', saveCellEdit);
+  $('cellEditCancel').addEventListener('click', closeCellEdit);
+  $('cellEditDelete').addEventListener('click', deleteCellEdit);
+  $('cellEditImgBtn').addEventListener('click', () => $('cellEditImgFile').click());
+  $('cellEditRetreat').addEventListener('click', () => {
+    $('cellEditRetreat').classList.toggle('on');
+    $('cellEditRetreatLabel').textContent = $('cellEditRetreat').classList.contains('on') ? '开' : '关';
+  });
+  $('cellEditImgClear').addEventListener('click', () => {
+    $('cellEditPreview').style.display = 'none';
+    cellEditTempImage = null;
+  });
+  $('cellEditImgFile').addEventListener('change', () => {
+    const file = $('cellEditImgFile').files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      cellEditTempImage = e.target.result;
+      $('cellEditPreview').src = cellEditTempImage;
+      $('cellEditPreview').style.display = 'block';
+    };
+    reader.readAsDataURL(file);
+  });
+  // 点击弹窗外部关闭
+  $('cellEditOverlay').addEventListener('click', e => {
+    if (e.target === $('cellEditOverlay')) closeCellEdit();
   });
 }
 
