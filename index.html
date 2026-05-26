@@ -424,6 +424,7 @@ body {
     <span>最后操作: <strong id="stLastRoll">--</strong></span>
     <span>棋子位置: <strong id="stPosition">1</strong> / <strong id="stEnd">100</strong></span>
     <span>方向: <strong id="stDirection">--</strong></span>
+    <span>回合: <strong id="stTurn">未连接</strong></span>
   </div>
 
   <!-- 棋盘 -->
@@ -608,9 +609,24 @@ function cacheDOM() {
 // ==================== 状态 ====================
 function isBlueAvailable() {
   if (state.game.gameOver) return false;
+  if (state.connection.connected) {
+    // 联机模式：蓝方只能在后退区且自己是蓝方时掷骰
+    if (state.role !== 'blue') return false;
+    return state.board.retreatZones.includes(state.piece.position);
+  }
+  // 单人模式
   return state.board.retreatZones.includes(state.piece.position);
 }
-function isRedAvailable() { return !state.game.gameOver; }
+function isRedAvailable() {
+  if (state.game.gameOver) return false;
+  if (state.connection.connected) {
+    // 联机模式：红方只能在非后退区且自己是红方时掷骰
+    if (state.role !== 'red') return false;
+    return !state.board.retreatZones.includes(state.piece.position);
+  }
+  // 单人模式
+  return true;
+}
 
 function updateDiceAvailability() {
   state.dice.red.available = isRedAvailable();
@@ -656,6 +672,9 @@ function mergeRemoteState(s) {
   state.piece = s.piece;
   state.dice = s.dice;
   state.game = s.game;
+  // 持久化接收到的棋盘配置（含图片文字）
+  saveBoardConfig();
+  syncStateToSettings();
   updateDiceAvailability();
   renderAll();
 }
@@ -784,13 +803,28 @@ function renderDice() {
   rd.querySelector('.dice-face').textContent = state.dice.red.face;
   bd.querySelector('.dice-face').textContent = state.dice.blue.face;
 
-  rd.querySelector('.dice-hint').textContent =
-    state.game.gameOver ? '游戏结束' : '前进 ' + (state.board.endCell - state.piece.position) + ' 步到达终点';
+  const connected = state.connection.connected;
+  const isRed = state.role === 'red';
+  const isBlue = state.role === 'blue';
+  const onRetreat = state.board.retreatZones.includes(state.piece.position);
 
-  const blueAvailable = state.dice.blue.available;
-  bd.querySelector('.dice-hint').textContent =
-    state.game.gameOver ? '游戏结束' :
-    blueAvailable ? '后退' : '不在后退区，不可用';
+  // 红方提示
+  let redHint = state.game.gameOver ? '游戏结束' :
+    '前进 (剩余' + (state.board.endCell - state.piece.position) + '步到终点)';
+  if (connected && !state.game.gameOver) {
+    if (!isRed) redHint = '等待红方操作...';
+    else if (onRetreat) redHint = '在后退区，请等待蓝方';
+  }
+  rd.querySelector('.dice-hint').textContent = redHint;
+
+  // 蓝方提示
+  let blueHint = state.game.gameOver ? '游戏结束' : '不在后退区，不可用';
+  if (connected && !state.game.gameOver) {
+    if (!isBlue) blueHint = '等待蓝方操作...';
+    else if (!onRetreat) blueHint = '只有后退区才能操作';
+    else blueHint = '后退（在后退区）';
+  }
+  bd.querySelector('.dice-hint').textContent = blueHint;
 
   if (state.dice.red.available && !state.game.gameOver) {
     rd.classList.remove('disabled'); rd.disabled = false;
@@ -798,7 +832,7 @@ function renderDice() {
     rd.classList.add('disabled'); rd.disabled = true;
   }
 
-  if (blueAvailable) {
+  if (state.dice.blue.available) {
     bd.classList.remove('disabled'); bd.disabled = false;
   } else {
     bd.classList.add('disabled'); bd.disabled = true;
@@ -821,6 +855,20 @@ function updateStatusBar() {
   } else {
     $('stDirection').textContent = '--';
   }
+
+  // 显示当前控制权
+  const turnEl = $('stTurn');
+  if (!state.connection.connected) {
+    turnEl.textContent = '未连接';
+  } else if (state.game.gameOver) {
+    turnEl.textContent = '游戏结束';
+  } else if (state.dice.red.available) {
+    turnEl.textContent = '红方回合';
+  } else if (state.dice.blue.available) {
+    turnEl.textContent = '蓝方回合';
+  } else {
+    turnEl.textContent = '等待中...';
+  }
 }
 
 // ==================== 连接UI ====================
@@ -833,7 +881,9 @@ function updateConnectionUI() {
   s.className = '';
   switch (state.connection.status) {
     case 'connected':
-      s.classList.add('status-ok'); s.textContent = '已连接'; break;
+      s.classList.add('status-ok');
+      s.textContent = state.role === 'red' ? '已连接（红方）' : state.role === 'blue' ? '已连接（蓝方）' : '已连接';
+      break;
     case 'connecting':
       s.classList.add('status-connecting'); s.textContent = '连接中...'; break;
     case 'error':
@@ -1488,12 +1538,15 @@ function handleMessage(msg) {
       if (msg.board) {
         state.board = msg.board;
         resetGameState();
+        syncStateToSettings();
+        saveBoardConfig();
         renderAll();
       }
       break;
 
     case 'GAME_RESET':
       resetGameState();
+      updateDiceAvailability();
       renderAll();
       break;
   }
