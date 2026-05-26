@@ -1067,7 +1067,12 @@ function applyPeerServerConfig() {
 let mqttClient = null;
 let mqttRoomId = null;
 let connType = null; // 'peerjs' | 'manual' | 'relay' | null
-const MQTT_BROKER = 'wss://broker.emqx.io:8084/mqtt';
+const MQTT_BROKERS = [
+  'wss://broker-cn.emqx.io:8084/mqtt',   // EMQX 中国
+  'wss://broker.emqx.io:8084/mqtt',       // EMQX 全球
+  'wss://mqtt.eclipseprojects.io:443/mqtt', // Eclipse
+];
+let mqttBrokerIdx = 0;
 
 function generateRoomId() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -1104,27 +1109,59 @@ function relayJoinRoom() {
 }
 
 function connectMQTT(roomId, role) {
+  if (typeof mqtt === 'undefined') {
+    $('relayStatus').textContent = 'MQTT 库加载失败，请刷新页面重试';
+    $('relayStatus').style.color = 'var(--red)';
+    return;
+  }
+
   $('relayStatus').textContent = '连接中...';
   $('relayStatus').style.color = 'var(--orange)';
 
   mqttRoomId = roomId;
+  mqttBrokerIdx = 0;
   const clientId = 'bg_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
 
+  tryConnectBroker(roomId, role, clientId);
+}
+
+function tryConnectBroker(roomId, role, clientId) {
+  if (mqttBrokerIdx >= MQTT_BROKERS.length) {
+    $('relayStatus').textContent = '所有服务器连接失败，请检查网络或 VPN';
+    $('relayStatus').style.color = 'var(--red)';
+    return;
+  }
+  const broker = MQTT_BROKERS[mqttBrokerIdx];
+  console.log('尝试连接 MQTT:', broker);
+
+  // 连接超时
+  let connTimer = setTimeout(() => {
+    if (mqttClient && !mqttClient.connected) {
+      console.warn('MQTT 连接超时:', broker);
+      try { mqttClient.end(true); } catch(e) {}
+      mqttClient = null;
+      mqttBrokerIdx++;
+      tryConnectBroker(roomId, role, clientId);
+    }
+  }, 10000);
+
   try {
-    mqttClient = mqtt.connect(MQTT_BROKER, {
+    mqttClient = mqtt.connect(broker, {
       clientId: clientId,
       clean: true,
-      connectTimeout: 15000,
+      connectTimeout: 10000,
       keepalive: 60,
       reconnectPeriod: 0,
     });
   } catch(e) {
+    clearTimeout(connTimer);
     $('relayStatus').textContent = '连接失败：' + (e.message || '无法创建连接');
     $('relayStatus').style.color = 'var(--red)';
     return;
   }
 
   mqttClient.on('connect', () => {
+    clearTimeout(connTimer);
     const topic = 'boardgame/' + roomId;
     mqttClient.subscribe(topic, { qos: 0 }, (err) => {
       if (err) {
@@ -1152,9 +1189,16 @@ function connectMQTT(roomId, role) {
       $('relayStatus').style.color = 'var(--green)';
       $('relayDisconnect').style.display = '';
 
-      // 同步游戏状态
+      // 保存房间信息用于刷新后重连
+      localStorage.setItem('relayRoom', JSON.stringify({ roomId, role, timestamp: Date.now() }));
+      updateDiceAvailability();
+      renderDice();
+
+      // 同步：创建者广播自己的状态，加入者只宣告自己上线
       publishRelay({ type: 'PLAYER_JOIN', role: role });
-      publishRelay({ type: 'GAME_STATE_FULL', state: serializableState() });
+      if (role === 'red') {
+        publishRelay({ type: 'GAME_STATE_FULL', state: serializableState() });
+      }
     });
   });
 
@@ -1165,8 +1209,10 @@ function connectMQTT(roomId, role) {
       // 收到对方消息
       if (msg.type === 'PLAYER_JOIN') {
         $('relayStatus').textContent = '已连接（房间 ' + roomId + '，' + (role === 'red' ? '红方' : '蓝方') + '）对方已在线';
-        // 重发游戏状态确保新人同步
-        publishRelay({ type: 'GAME_STATE_FULL', state: serializableState() });
+        // 只有红方（创建者）回复游戏状态，确保状态权威
+        if (role === 'red') {
+          publishRelay({ type: 'GAME_STATE_FULL', state: serializableState() });
+        }
       }
       handleMessage(msg);
     } catch(e) {
@@ -1180,9 +1226,17 @@ function connectMQTT(roomId, role) {
 
   mqttClient.on('error', (e) => {
     console.error('MQTT error:', e);
+    // 未连接时尝试下一个服务器
+    if (!state.connection.connected && mqttBrokerIdx < MQTT_BROKERS.length - 1) {
+      try { mqttClient.end(true); } catch(ex) {}
+      mqttClient = null;
+      mqttBrokerIdx++;
+      tryConnectBroker(roomId, role, clientId);
+      return;
+    }
     $('relayStatus').textContent = '连接错误：' + (e.message || '未知');
     $('relayStatus').style.color = 'var(--red)';
-    handleRelayDisconnect();
+    if (state.connection.connected) handleRelayDisconnect();
   });
 
   mqttClient.on('offline', () => {
@@ -1192,18 +1246,27 @@ function connectMQTT(roomId, role) {
 }
 
 function publishRelay(msg) {
-  if (!mqttClient || !mqttClient.connected) return;
-  msg._senderId = mqttClient.options.clientId;
-  mqttClient.publish('boardgame/' + mqttRoomId, JSON.stringify(msg), { qos: 0 });
+  if (!mqttClient || !mqttClient.connected) {
+    console.warn('MQTT 未连接，无法发送消息');
+    return;
+  }
+  msg._senderId = (mqttClient.options && mqttClient.options.clientId) || state.connection.ownPeerId;
+  msg._ts = Date.now();
+  try {
+    mqttClient.publish('boardgame/' + mqttRoomId, JSON.stringify(msg), { qos: 0 });
+  } catch(e) {
+    console.warn('MQTT 发送失败:', e);
+  }
 }
 
 function disconnectRelay() {
-  connType = null; // 先清除，防止 close 事件重复触发 handleRelayDisconnect
+  connType = null;
   if (mqttClient) {
     try { mqttClient.end(true); } catch(e) {}
     mqttClient = null;
   }
   mqttRoomId = null;
+  localStorage.removeItem('relayRoom');
   state.connection.connected = false;
   state.connection.status = 'disconnected';
   state.connection.ownPeerId = null;
@@ -1441,6 +1504,7 @@ function disconnectPeer() {
   if (peerConn) { peerConn.close(); peerConn = null; }
   if (manualPc) { manualPc.close(); manualPc = null; manualDc = null; }
   if (mqttClient) { try { mqttClient.end(); } catch(e) {} mqttClient = null; mqttRoomId = null; }
+  localStorage.removeItem('relayRoom');
   state.connection.connected = false;
   state.connection.status = 'disconnected';
   state.connection.remotePeerId = null;
@@ -2002,6 +2066,22 @@ function bindEvents() {
 }
 
 // ==================== 初始化 ====================
+function autoReconnectRelay() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('relayRoom') || 'null');
+    if (!saved || !saved.roomId || !saved.role) return;
+    // 仅在 10 分钟内的房间才自动重连
+    if (Date.now() - saved.timestamp > 600000) {
+      localStorage.removeItem('relayRoom');
+      return;
+    }
+    connectMQTT(saved.roomId, saved.role);
+    $('relayConnOverlay').classList.add('show');
+  } catch(e) {
+    localStorage.removeItem('relayRoom');
+  }
+}
+
 function init() {
   // 检测 file:// 协议
   if (location.protocol === 'file:') {
@@ -2011,6 +2091,7 @@ function init() {
   loadPeerServerConfig();
   loadBoardConfig();        // 恢复保存的棋盘配置
   initPeer();
+  autoReconnectRelay();     // 自动重连 MQTT 中继
   updateDiceAvailability();
   renderAll();
   bindEvents();
