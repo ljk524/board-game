@@ -1,0 +1,1118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>双人联机棋盘游戏</title>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.2/dist/peerjs.min.js"></script>
+<style>
+/* ===== 全局样式 ===== */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #1A1A2E;
+  --surface: #16213E;
+  --surface2: #0F3460;
+  --text: #EAEAEA;
+  --text2: #A0A0A0;
+  --red: #E74C3C;
+  --red-dark: #C0392B;
+  --red-light: #FADBD8;
+  --blue: #3498DB;
+  --blue-dark: #2471A3;
+  --blue-light: #D6EAF8;
+  --gold: #FFD700;
+  --green: #27AE60;
+  --orange: #E67E22;
+  --purple: #9B59B6;
+  --cell-size: 120px;
+  --dice-size: 110px;
+  --radius: 8px;
+  --radius-lg: 14px;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  min-height: 100dvh;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app { max-width: 100vw; padding: 8px; }
+
+/* ===== 连接栏 ===== */
+#conn-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  background: var(--surface); padding: 10px 12px; border-radius: var(--radius-lg);
+  margin-bottom: 8px;
+}
+#conn-bar .my-id {
+  font-size: 12px; color: var(--text2); flex: 0 0 auto;
+}
+#conn-bar .my-id span {
+  color: var(--gold); font-weight: 700; font-size: 13px;
+  user-select: all; -webkit-user-select: all;
+}
+#conn-bar input {
+  flex: 1 1 120px; min-width: 100px;
+  padding: 8px 10px; border-radius: var(--radius); border: 1px solid #444;
+  background: var(--bg); color: var(--text); font-size: 13px;
+}
+#conn-bar button {
+  padding: 8px 14px; border: none; border-radius: var(--radius);
+  font-size: 13px; font-weight: 600; cursor: pointer;
+  white-space: nowrap; transition: opacity 0.2s;
+}
+#conn-bar button:active { opacity: 0.7; }
+.btn-connect { background: var(--green); color: #fff; }
+.btn-disconnect { background: #888; color: #fff; }
+.btn-toggle { background: var(--purple); color: #fff; font-size: 16px; padding: 6px 12px; }
+#conn-status {
+  font-size: 11px; font-weight: 600; padding: 4px 8px; border-radius: 20px;
+  flex: 0 0 auto;
+}
+.status-off { background: #555; color: #aaa; }
+.status-ok { background: #1a4a1a; color: #4eff4e; }
+.status-err { background: #4a1a1a; color: #ff4e4e; }
+.status-connecting { background: #4a3a1a; color: #ffaa00; }
+
+/* ===== 设置面板 ===== */
+#settings-panel {
+  background: var(--surface); border-radius: var(--radius-lg);
+  padding: 12px; margin-bottom: 8px; display: none;
+}
+#settings-panel.open { display: block; }
+#settings-panel h3 {
+  font-size: 14px; color: var(--text2); margin-bottom: 8px;
+}
+.settings-row {
+  display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px;
+  align-items: center;
+}
+.settings-row label {
+  font-size: 12px; color: var(--text2); min-width: auto;
+}
+.settings-row input, .settings-row textarea {
+  padding: 6px 8px; border-radius: var(--radius); border: 1px solid #444;
+  background: var(--bg); color: var(--text); font-size: 12px;
+}
+.settings-row input[type="number"] { width: 70px; }
+.settings-row textarea {
+  width: 100%; min-height: 60px; font-family: monospace; font-size: 11px;
+  resize: vertical;
+}
+.settings-row button {
+  padding: 6px 12px; border: none; border-radius: var(--radius);
+  font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.btn-apply { background: var(--blue); color: #fff; }
+.btn-reset { background: var(--red); color: #fff; }
+.peer-server-config { border-top: 1px solid #333; padding-top: 8px; margin-top: 8px; }
+
+/* ===== 状态栏 ===== */
+#status-bar {
+  display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
+  padding: 8px; font-size: 13px; color: var(--text2);
+  background: var(--surface); border-radius: var(--radius); margin-bottom: 8px;
+}
+#status-bar span strong { color: var(--text); }
+
+/* ===== 棋盘 ===== */
+#board-scroll {
+  width: 100%; overflow-x: auto; overflow-y: hidden;
+  padding: 12px 0; margin-bottom: 8px;
+  -webkit-overflow-scrolling: touch; scrollbar-width: thin;
+  scrollbar-color: #555 var(--bg);
+}
+#board-grid {
+  display: inline-grid; gap: 6px;
+  min-width: max-content; padding: 0 20px;
+}
+.cell {
+  width: var(--cell-size); height: var(--cell-size);
+  background-color: #2a2a3e; background-size: cover;
+  background-position: center; background-repeat: no-repeat;
+  border-radius: 8px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 600; position: relative;
+  transition: background 0.3s, transform 0.2s, box-shadow 0.3s;
+  cursor: default; user-select: none; -webkit-user-select: none;
+  border: 3px solid transparent;
+  overflow: hidden;
+}
+.cell::before {
+  content: '';
+  position: absolute; inset: 0; border-radius: 5px;
+  background: rgba(0,0,0,0.3);
+  z-index: 0;
+}
+.cell.has-image::before { background: rgba(0,0,0,0.25); }
+.cell .cell-inner {
+  position: relative; z-index: 1;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  width: 100%; height: 100%;
+  text-shadow: 0 1px 3px rgba(0,0,0,0.7);
+}
+.cell .cell-num {
+  font-size: 11px; color: rgba(255,255,255,0.6); position: absolute; top: 3px; left: 5px;
+}
+.cell .cell-emoji { font-size: 28px; line-height: 1; }
+.cell .cell-text {
+  font-size: 11px; color: #eee; text-align: center; padding: 0 4px;
+  word-break: break-all; line-height: 1.2;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.cell.retreat { border-color: var(--purple); background-color: #2a1a3e; }
+.cell.retreat::after {
+  content: '◀▶'; position: absolute; bottom: 2px; right: 5px;
+  font-size: 10px; color: var(--purple); z-index: 1; opacity: 0.8;
+}
+.cell.current {
+  border-color: #fff; z-index: 3;
+  box-shadow: 0 0 24px rgba(255,215,0,0.7), inset 0 0 30px rgba(255,215,0,0.2);
+  transform: scale(1.08);
+}
+.cell.current::before { background: rgba(255,215,0,0.15); }
+.cell.current .cell-num { color: var(--gold); font-weight: 700; }
+.cell.current .cell-text { color: #fff; }
+.cell.end { border-color: var(--green); background-color: #1a3a2a; }
+.cell.start { border-color: var(--orange); background-color: #3a2a1a; }
+.cell.path {
+  background-color: #3a3a2a; border-color: #887700;
+}
+
+/* ===== 当前格子信息 ===== */
+#cell-info {
+  background: var(--surface); border-radius: var(--radius-lg);
+  padding: 14px 16px; margin-bottom: 8px; text-align: center;
+  min-height: 60px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 4px;
+  border: 2px solid #333;
+}
+#cell-info .ci-image {
+  max-width: 80px; max-height: 50px; object-fit: contain; border-radius: 4px;
+}
+#cell-info .ci-text {
+  font-size: 16px; font-weight: 700; color: var(--text);
+}
+#cell-info .ci-meta {
+  font-size: 11px; color: var(--text2);
+}
+
+/* ===== 骰子区 ===== */
+#dice-area {
+  display: flex; justify-content: center; gap: 20px;
+  padding: 12px 8px; flex-wrap: wrap;
+}
+.dice-btn {
+  width: var(--dice-size); height: var(--dice-size);
+  border: none; border-radius: var(--radius-lg);
+  cursor: pointer; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 2px;
+  transition: transform 0.12s, box-shadow 0.12s, opacity 0.25s, filter 0.25s;
+  user-select: none; -webkit-user-select: none;
+  touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  position: relative; overflow: hidden;
+}
+.dice-btn:active:not(.disabled) { transform: scale(0.9); }
+.dice-btn.red {
+  background: linear-gradient(135deg, var(--red), var(--red-dark));
+  color: #fff; box-shadow: 0 6px 24px rgba(231,76,60,0.35);
+}
+.dice-btn.blue {
+  background: linear-gradient(135deg, var(--blue), var(--blue-dark));
+  color: #fff; box-shadow: 0 6px 24px rgba(52,152,219,0.35);
+}
+.dice-btn.disabled {
+  opacity: 0.3; cursor: not-allowed; filter: grayscale(50%);
+  box-shadow: none;
+}
+.dice-btn .dice-face {
+  font-size: 42px; font-weight: 900; line-height: 1;
+  transition: transform 0.08s;
+}
+.dice-btn .dice-label { font-size: 11px; opacity: 0.85; }
+.dice-btn .dice-hint {
+  font-size: 10px; opacity: 0.65; margin-top: 2px;
+}
+
+/* ===== 胜利遮罩 ===== */
+#win-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.75);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100; opacity: 0; pointer-events: none; transition: opacity 0.4s;
+}
+#win-overlay.show { opacity: 1; pointer-events: auto; }
+#win-dialog {
+  background: var(--surface); padding: 32px 24px; border-radius: var(--radius-lg);
+  text-align: center; max-width: 320px; width: 90%;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+}
+#win-dialog h2 { font-size: 24px; margin-bottom: 8px; }
+#win-dialog .win-emoji { font-size: 56px; margin-bottom: 12px; }
+#win-dialog button {
+  margin-top: 16px; padding: 10px 28px; border: none; border-radius: var(--radius);
+  font-size: 15px; font-weight: 700; cursor: pointer;
+  background: var(--gold); color: #333;
+}
+
+/* ===== 文件协议警告 ===== */
+#file-warning {
+  display: none; background: #3a2a1a; color: #ffaa00; padding: 10px 14px;
+  border-radius: var(--radius); margin-bottom: 8px; font-size: 12px; text-align: center;
+}
+#file-warning code { background: #222; padding: 2px 6px; border-radius: 3px; }
+
+/* ===== Footer ===== */
+#footer {
+  text-align: center; padding: 12px; font-size: 10px; color: #555;
+  margin-top: 8px;
+}
+#footer a { color: var(--blue); text-decoration: none; }
+
+/* ===== 响应式 ===== */
+@media (max-width: 600px) {
+  :root { --cell-size: 68px; --dice-size: 90px; }
+  #conn-bar { font-size: 11px; }
+  #conn-bar input { font-size: 11px; padding: 6px 8px; }
+  #conn-bar button { font-size: 11px; padding: 6px 10px; }
+  #dice-area { gap: 12px; }
+  .dice-btn .dice-face { font-size: 32px; }
+  #board-grid { gap: 4px; padding: 0 10px; }
+  .cell .cell-num { font-size: 9px; }
+  .cell .cell-emoji { font-size: 20px; }
+  .cell .cell-text { font-size: 9px; }
+  #cell-info .ci-text { font-size: 14px; }
+}
+@media (max-width: 380px) {
+  :root { --cell-size: 56px; --dice-size: 80px; }
+  .cell .cell-emoji { font-size: 16px; }
+  .cell .cell-text { font-size: 8px; }
+  #dice-area { gap: 8px; }
+}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- 文件协议警告 -->
+  <div id="file-warning">
+    PeerJS 无法通过 file:// 协议工作，请使用 <code>npx serve .</code> 启动本地服务器后访问。
+  </div>
+
+  <!-- 连接栏 -->
+  <div id="conn-bar">
+    <button class="btn-toggle" id="settingsToggle" title="设置">&#x2699;</button>
+    <span class="my-id">我的ID: <span id="myPeerId">--</span></span>
+    <input type="text" id="remotePeerId" placeholder="输入对方 Peer ID">
+    <button class="btn-connect" id="connectBtn">连接</button>
+    <button class="btn-disconnect" id="disconnectBtn" style="display:none">断开</button>
+    <span id="conn-status" class="status-off">未连接</span>
+  </div>
+
+  <!-- 设置面板 -->
+  <div id="settings-panel">
+    <h3>棋盘设置</h3>
+    <div class="settings-row">
+      <label>格子总数:</label><input type="number" id="cfgSize" min="5" max="500" value="100">
+      <label>起点:</label><input type="number" id="cfgStart" min="1" value="1">
+      <label>终点:</label><input type="number" id="cfgEnd" min="2" value="100">
+    </div>
+    <div class="settings-row">
+      <label>后退区 (逗号分隔, 如 10,20,30):</label>
+      <input type="text" id="cfgRetreat" value="10,20,30,40,50,60,70,80,90" style="flex:1;min-width:200px;">
+    </div>
+    <div class="settings-row">
+      <label>格子内容 (JSON 格式, {"格子编号":{"text":"文字","image":"emoji或URL"}}):</label>
+    </div>
+    <div class="settings-row">
+      <textarea id="cfgCells" placeholder='{"5":{"text":"陷阱","image":"💀"},"10":{"text":"宝箱","image":"📦"}}'></textarea>
+    </div>
+    <div class="settings-row">
+      <button class="btn-apply" id="applySettingsBtn">应用并同步</button>
+      <button class="btn-reset" id="resetGameBtn">重置游戏</button>
+    </div>
+
+    <!-- PeerJS 服务器配置 -->
+    <div class="peer-server-config">
+      <h3>PeerJS 服务器配置</h3>
+      <div class="settings-row">
+        <label>Host:</label><input type="text" id="cfgPeerHost" value="0.peerjs.com">
+        <label>Port:</label><input type="number" id="cfgPeerPort" value="443" min="1" max="65535" style="width:70px;">
+        <label>Path:</label><input type="text" id="cfgPeerPath" value="/" style="width:50px;">
+        <button class="btn-apply" id="applyPeerServerBtn">应用服务器配置</button>
+      </div>
+      <div style="font-size:10px;color:var(--text2);">
+        常用备选: host=peerjs-server.herokuapp.com, port=443, path=/
+      </div>
+    </div>
+  </div>
+
+  <!-- 状态栏 -->
+  <div id="status-bar">
+    <span>最后操作: <strong id="stLastRoll">--</strong></span>
+    <span>棋子位置: <strong id="stPosition">1</strong> / <strong id="stEnd">100</strong></span>
+    <span>方向: <strong id="stDirection">--</strong></span>
+  </div>
+
+  <!-- 当前格子信息 -->
+  <div id="cell-info">
+    <div class="ci-text" id="ciText">起点</div>
+    <div class="ci-meta" id="ciMeta"></div>
+  </div>
+
+  <!-- 棋盘 -->
+  <div id="board-scroll"><div id="board-grid"></div></div>
+
+  <!-- 骰子区 -->
+  <div id="dice-area">
+    <button class="dice-btn red disabled" id="redDice" disabled>
+      <span class="dice-label">红方 玩家A</span>
+      <span class="dice-face">?</span>
+      <span class="dice-hint">前进</span>
+    </button>
+    <button class="dice-btn blue disabled" id="blueDice" disabled>
+      <span class="dice-label">蓝方 玩家B</span>
+      <span class="dice-face">?</span>
+      <span class="dice-hint">后退 (需在后退区)</span>
+    </button>
+  </div>
+
+  <!-- 胜利遮罩 -->
+  <div id="win-overlay">
+    <div id="win-dialog">
+      <div class="win-emoji">🎉</div>
+      <h2 id="winText">游戏结束</h2>
+      <p id="winDetail"></p>
+      <button id="playAgainBtn">再来一局</button>
+    </div>
+  </div>
+
+  <!-- 页脚 -->
+  <div id="footer">
+    双人联机棋盘游戏 | P2P by <a href="https://peerjs.com" target="_blank">PeerJS</a>
+  </div>
+</div>
+
+<script>
+(function() { 'use strict';
+
+// ==================== 工具函数 ====================
+function rand(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+// ==================== 默认状态 ====================
+function defaultBoard() {
+  return {
+    size: 100, startCell: 1, endCell: 100, cells: {},
+    retreatZones: [10,20,30,40,50,60,70,80,90]
+  };
+}
+
+function defaultState() {
+  const b = defaultBoard();
+  return {
+    board: b,
+    piece: { position: b.startCell, prevPosition: b.startCell },
+    dice: {
+      red:  { value: null, face: '?', available: false },
+      blue: { value: null, face: '?', available: false },
+    },
+    game: { winner: null, gameOver: false, lastMovedBy: null, lastMoveAmount: 0 },
+    connection: { ownPeerId: null, remotePeerId: null, connected: false, status: 'disconnected' },
+    role: null,
+  };
+}
+
+let state = defaultState();
+let diceLocked = false;       // 防止连击
+let diceAnimTimer = null;     // 动画定时器
+
+// ==================== DOM 缓存 ====================
+const $ = id => document.getElementById(id);
+
+function cacheDOM() {
+  // 缓存会在 init 中设置，因为 DOM 已就绪
+}
+
+// ==================== 状态 ====================
+function isBlueAvailable() {
+  if (state.game.gameOver) return false;
+  return state.board.retreatZones.includes(state.piece.position);
+}
+function isRedAvailable() { return !state.game.gameOver; }
+
+function updateDiceAvailability() {
+  state.dice.red.available = isRedAvailable();
+  state.dice.blue.available = isBlueAvailable();
+}
+
+function checkWin() {
+  if (state.piece.position === state.board.endCell) {
+    state.game.gameOver = true;
+    state.game.winner = state.game.lastMovedBy || 'red';
+    state.dice.red.available = false;
+    state.dice.blue.available = false;
+    showWinOverlay(state.game.winner);
+  }
+}
+
+function resetGameState() {
+  state.piece.position = state.board.startCell;
+  state.piece.prevPosition = state.board.startCell;
+  state.dice.red.value = null;
+  state.dice.red.face = '?';
+  state.dice.blue.value = null;
+  state.dice.blue.face = '?';
+  state.game.gameOver = false;
+  state.game.winner = null;
+  state.game.lastMovedBy = null;
+  state.game.lastMoveAmount = 0;
+  updateDiceAvailability();
+}
+
+// ==================== 序列化（去掉连接数据） ====================
+function serializableState() {
+  return {
+    board: JSON.parse(JSON.stringify(state.board)),
+    piece: JSON.parse(JSON.stringify(state.piece)),
+    dice: JSON.parse(JSON.stringify(state.dice)),
+    game: JSON.parse(JSON.stringify(state.game)),
+  };
+}
+
+function mergeRemoteState(s) {
+  state.board = s.board;
+  state.piece = s.piece;
+  state.dice = s.dice;
+  state.game = s.game;
+  updateDiceAvailability();
+  renderAll();
+}
+
+// ==================== 棋盘渲染 ====================
+function renderBoard() {
+  const grid = $('board-grid');
+  const bs = state.board;
+  grid.style.gridTemplateColumns = 'repeat(' + bs.size + ', var(--cell-size))';
+
+  let html = '';
+  for (let i = 1; i <= bs.size; i++) {
+    let cls = 'cell';
+    if (i === bs.startCell) cls += ' start';
+    if (i === bs.endCell) cls += ' end';
+    if (bs.retreatZones.includes(i)) cls += ' retreat';
+    if (i === state.piece.position) cls += ' current';
+
+    const prev = state.piece.prevPosition;
+    const cur = state.piece.position;
+    if (prev !== cur &&
+        ((prev < cur && i > prev && i < cur) ||
+         (prev > cur && i < prev && i > cur))) {
+      cls += ' path';
+    }
+
+    const cellCfg = bs.cells[i] || {};
+    const imgVal = cellCfg.image || '';
+    const text = cellCfg.text || '';
+
+    let styleAttr = '';
+    let hasImage = false;
+    let emojiHtml = '';
+    let textHtml = '';
+
+    // 处理图片
+    if (imgVal) {
+      if (imgVal.length <= 4 && !imgVal.startsWith('http')) {
+        // 短字符串 → emoji
+        emojiHtml = '<span class="cell-emoji">' + imgVal + '</span>';
+      } else {
+        // URL → 整图背景
+        styleAttr = ' style="background-image:url(\'' + imgVal + '\')"';
+        hasImage = true;
+        cls += ' has-image';
+      }
+    }
+
+    // 文字
+    if (text) {
+      textHtml = '<span class="cell-text">' + text + '</span>';
+    }
+
+    html += '<div class="' + cls + '" data-cell="' + i + '"' + styleAttr + '>' +
+      '<div class="cell-inner">' +
+      '<span class="cell-num">' + i + '</span>' +
+      emojiHtml +
+      textHtml +
+      '</div>' +
+    '</div>';
+  }
+
+  grid.innerHTML = html;
+  updateCellInfo();
+
+  // 滚动到当前棋子
+  requestAnimationFrame(() => {
+    const curEl = document.querySelector('.cell.current');
+    const scroll = $('board-scroll');
+    if (curEl && scroll) {
+      const cx = curEl.offsetLeft - scroll.clientWidth / 2 + curEl.clientWidth / 2;
+      scroll.scrollTo({ left: Math.max(0, cx), behavior: 'smooth' });
+    }
+  });
+}
+
+// ==================== 格子信息面板 ====================
+function updateCellInfo() {
+  const pos = state.piece.position;
+  const cfg = state.board.cells[pos] || {};
+  const text = cfg.text || '';
+  const imgVal = cfg.image || '';
+  const isRetreat = state.board.retreatZones.includes(pos);
+  const isStart = pos === state.board.startCell;
+  const isEnd = pos === state.board.endCell;
+
+  let displayText = text || '格子 ' + pos;
+  let meta = '';
+  if (isStart) meta = '起点';
+  if (isEnd) meta += (meta ? ' · ' : '') + '终点';
+  if (isRetreat) meta += (meta ? ' · ' : '') + '后退区';
+
+  $('ciText').textContent = displayText;
+  $('ciMeta').textContent = meta;
+
+  // 如果有图片且是 URL，显示缩略图
+  let imgEl = document.getElementById('ciImg');
+  if (imgVal && imgVal.startsWith('http')) {
+    if (!imgEl) {
+      imgEl = document.createElement('img');
+      imgEl.id = 'ciImg';
+      imgEl.className = 'ci-image';
+      $('cell-info').insertBefore(imgEl, $('ciMeta'));
+    }
+    imgEl.src = imgVal;
+    imgEl.style.display = '';
+  } else if (imgEl) {
+    imgEl.style.display = 'none';
+  }
+}
+
+// ==================== 骰子渲染 ====================
+function renderDice() {
+  const rd = $('redDice'); const bd = $('blueDice');
+  rd.querySelector('.dice-face').textContent = state.dice.red.face;
+  bd.querySelector('.dice-face').textContent = state.dice.blue.face;
+
+  rd.querySelector('.dice-hint').textContent =
+    state.game.gameOver ? '游戏结束' : '前进 ' + (state.board.endCell - state.piece.position) + ' 步到达终点';
+
+  const blueAvailable = state.dice.blue.available;
+  bd.querySelector('.dice-hint').textContent =
+    state.game.gameOver ? '游戏结束' :
+    blueAvailable ? '后退' : '不在后退区，不可用';
+
+  if (state.dice.red.available && !state.game.gameOver) {
+    rd.classList.remove('disabled'); rd.disabled = false;
+  } else {
+    rd.classList.add('disabled'); rd.disabled = true;
+  }
+
+  if (blueAvailable) {
+    bd.classList.remove('disabled'); bd.disabled = false;
+  } else {
+    bd.classList.add('disabled'); bd.disabled = true;
+  }
+
+}
+
+// ==================== 状态栏 ====================
+function updateStatusBar() {
+  $('stLastRoll').textContent =
+    (state.game.lastMovedBy && state.game.lastMoveAmount)
+    ? (state.game.lastMovedBy === 'red' ? '红方 +' : '蓝方 -') + state.game.lastMoveAmount
+    : '--';
+  $('stPosition').textContent = state.piece.position;
+  $('stEnd').textContent = state.board.endCell;
+  if (state.piece.position > state.piece.prevPosition) {
+    $('stDirection').textContent = '前进 ▶';
+  } else if (state.piece.position < state.piece.prevPosition) {
+    $('stDirection').textContent = '后退 ◀';
+  } else {
+    $('stDirection').textContent = '--';
+  }
+}
+
+// ==================== 连接UI ====================
+function updateConnectionUI() {
+  $('myPeerId').textContent = state.connection.ownPeerId || '--';
+  $('connectBtn').style.display = state.connection.connected ? 'none' : '';
+  $('disconnectBtn').style.display = state.connection.connected ? '' : 'none';
+
+  const s = $('conn-status');
+  s.className = '';
+  switch (state.connection.status) {
+    case 'connected':
+      s.classList.add('status-ok'); s.textContent = '已连接'; break;
+    case 'connecting':
+      s.classList.add('status-connecting'); s.textContent = '连接中...'; break;
+    case 'error':
+      s.classList.add('status-err'); s.textContent = '连接失败'; break;
+    default:
+      s.classList.add('status-off'); s.textContent = '未连接'; break;
+  }
+
+  if (!state.connection.connected && !state.game.gameOver) {
+    state.dice.red.available = false;
+    state.dice.blue.available = false;
+  }
+  renderDice();
+}
+
+// ==================== 胜利遮罩 ====================
+function showWinOverlay(winner) {
+  const color = winner === 'red' ? '红方 (玩家A)' : '蓝方 (玩家B)';
+  $('winText').textContent = color + ' 获胜！';
+  $('winDetail').textContent = '棋子到达终点 ' + state.board.endCell;
+  $('win-overlay').classList.add('show');
+}
+
+function hideWinOverlay() {
+  $('win-overlay').classList.remove('show');
+}
+
+// ==================== 骰子动画 ====================
+function animateDice(color, finalValue, callback) {
+  const btn = color === 'red' ? $('redDice') : $('blueDice');
+  const faceEl = btn.querySelector('.dice-face');
+  let frame = 0;
+  const total = 10;
+
+  if (diceAnimTimer) clearInterval(diceAnimTimer);
+
+  diceAnimTimer = setInterval(() => {
+    faceEl.textContent = rand(1, 6);
+    faceEl.style.transform = frame % 2 === 0 ? 'scale(1.25)' : 'scale(1)';
+    frame++;
+    if (frame >= total) {
+      clearInterval(diceAnimTimer);
+      diceAnimTimer = null;
+      faceEl.textContent = finalValue;
+      faceEl.style.transform = 'scale(1)';
+      if (callback) callback();
+    }
+  }, 50);
+}
+
+// ==================== 游戏逻辑 ====================
+function rollDice(color) {
+  if (diceLocked) return;
+  if (state.game.gameOver) return;
+  if (color === 'red' && !state.dice.red.available) return;
+  if (color === 'blue' && !state.dice.blue.available) return;
+  diceLocked = true;
+  const val = rand(1, 6);
+
+  animateDice(color, val, () => {
+    const prevPos = state.piece.position;
+    let newPos;
+    if (color === 'red') {
+      newPos = clamp(prevPos + val, 1, state.board.endCell);
+    } else {
+      newPos = clamp(prevPos - val, 1, state.board.endCell);
+    }
+
+    state.piece.prevPosition = prevPos;
+    state.piece.position = newPos;
+    state.dice[color].value = val;
+    state.dice[color].face = val;
+    state.game.lastMovedBy = color;
+    state.game.lastMoveAmount = val;
+
+    updateDiceAvailability();
+    checkWin();
+    renderAll();
+
+    // 同步给对端
+    if (state.connection.connected && peerConn) {
+      sendMsg({
+        type: 'DICE_ROLL',
+        dice: color,
+        roll: val,
+        newPosition: newPos,
+        prevPosition: prevPos,
+      });
+    }
+
+    // 冷却
+    setTimeout(() => { diceLocked = false; }, 250);
+  });
+}
+
+// ==================== 设置 ====================
+function loadPeerServerConfig() {
+  try {
+    const json = localStorage.getItem('peerServerConfig');
+    if (json) {
+      const cfg = JSON.parse(json);
+      $('cfgPeerHost').value = cfg.host || '0.peerjs.com';
+      $('cfgPeerPort').value = cfg.port || 443;
+      $('cfgPeerPath').value = cfg.path || '/';
+    }
+  } catch(e) {}
+}
+
+function savePeerServerConfig() {
+  const cfg = {
+    host: $('cfgPeerHost').value.trim() || '0.peerjs.com',
+    port: parseInt($('cfgPeerPort').value) || 443,
+    path: $('cfgPeerPath').value.trim() || '/',
+  };
+  localStorage.setItem('peerServerConfig', JSON.stringify(cfg));
+  return cfg;
+}
+
+function applySettings() {
+  const size = parseInt($('cfgSize').value) || 100;
+  const start = parseInt($('cfgStart').value) || 1;
+  const end = parseInt($('cfgEnd').value) || size;
+
+  // 验证
+  const errors = [];
+  if (size < 5 || size > 500) errors.push('格子总数需在 5-500 之间');
+  if (start < 1 || start >= size) errors.push('起点需 >= 1 且 < 格子总数');
+  if (end < 2 || end > size) errors.push('终点需 >= 2 且 <= 格子总数');
+  if (start >= end) errors.push('起点必须 < 终点');
+
+  const retreatRaw = $('cfgRetreat').value.trim();
+  const retreatZones = retreatRaw
+    ? retreatRaw.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n) && n >= 1 && n <= size)
+    : [];
+
+  let cells = {};
+  const cellsRaw = $('cfgCells').value.trim();
+  if (cellsRaw) {
+    try {
+      cells = JSON.parse(cellsRaw);
+      if (typeof cells !== 'object' || Array.isArray(cells)) throw new Error('需为 JSON 对象');
+      // 验证 key 为数字
+      for (const k of Object.keys(cells)) {
+        if (isNaN(parseInt(k))) errors.push('格子编号需为数字: ' + k);
+      }
+    } catch(e) {
+      errors.push('格子 JSON 解析失败: ' + e.message);
+    }
+  }
+
+  if (errors.length > 0) {
+    alert('设置错误：\n- ' + errors.join('\n- '));
+    return false;
+  }
+
+  // 更新 state
+  state.board.size = size;
+  state.board.startCell = start;
+  state.board.endCell = end;
+  state.board.retreatZones = retreatZones;
+  state.board.cells = cells;
+  $('stEnd').textContent = end;
+
+  resetGameState();
+  renderAll();
+
+  // 同步
+  if (state.connection.connected && peerConn) {
+    sendMsg({
+      type: 'BOARD_CONFIG_UPDATE',
+      board: JSON.parse(JSON.stringify(state.board)),
+    });
+  }
+
+  return true;
+}
+
+function applyPeerServerConfig() {
+  const cfg = savePeerServerConfig();
+  alert('PeerJS 服务器配置已保存。请刷新页面后重新连接以应用新配置。\n\n' +
+    'Host: ' + cfg.host + '\nPort: ' + cfg.port + '\nPath: ' + cfg.path);
+}
+
+// ==================== PeerJS ====================
+let peer = null;
+let peerConn = null;
+
+function getPeerServerConfig() {
+  loadPeerServerConfig();
+  return {
+    host: $('cfgPeerHost').value.trim() || '0.peerjs.com',
+    port: parseInt($('cfgPeerPort').value) || 443,
+    path: $('cfgPeerPath').value.trim() || '/',
+    secure: true,
+    debug: 0,
+  };
+}
+
+function initPeer() {
+  if (peer) { peer.destroy(); peer = null; }
+  const cfg = getPeerServerConfig();
+  try {
+    peer = new Peer(cfg);
+  } catch(e) {
+    state.connection.status = 'error';
+    updateConnectionUI();
+    return;
+  }
+
+  peer.on('open', id => {
+    state.connection.ownPeerId = id;
+    updateConnectionUI();
+  });
+
+  peer.on('connection', conn => {
+    if (state.connection.connected && peerConn) {
+      conn.close();
+      return;
+    }
+    peerConn = conn;
+    state.connection.connected = true;
+    state.connection.status = 'connected';
+    state.connection.remotePeerId = conn.peer;
+    state.role = 'blue';
+    setupConnection(conn);
+    // 被连方发送完整状态
+    sendMsg({ type: 'GAME_STATE_FULL', state: serializableState() });
+    updateConnectionUI();
+    updateDiceAvailability();
+    renderDice();
+  });
+
+  peer.on('disconnected', () => {
+    if (peer && !peer.destroyed) peer.reconnect();
+  });
+
+  peer.on('error', err => {
+    console.error('PeerJS error:', err);
+    if (err.type === 'unavailable-id' || err.type === 'invalid-id') {
+      state.connection.status = 'error';
+      updateConnectionUI();
+    }
+  });
+}
+
+function connectToPeer() {
+  const remoteId = $('remotePeerId').value.trim();
+  if (!remoteId) { alert('请输入对方的 Peer ID'); return; }
+  if (remoteId === state.connection.ownPeerId) { alert('不能连接自己'); return; }
+  if (!state.connection.ownPeerId) { alert('自己的 Peer ID 尚未生成，请稍候'); return; }
+
+  state.connection.status = 'connecting';
+  updateConnectionUI();
+
+  const conn = peer.connect(remoteId, { reliable: true });
+  conn.on('open', () => {
+    peerConn = conn;
+    state.connection.connected = true;
+    state.connection.status = 'connected';
+    state.connection.remotePeerId = remoteId;
+    state.role = 'red';
+    setupConnection(conn);
+    updateConnectionUI();
+    updateDiceAvailability();
+    renderDice();
+  });
+  conn.on('error', err => {
+    state.connection.status = 'error';
+    updateConnectionUI();
+  });
+}
+
+function setupConnection(conn) {
+  conn.on('data', data => {
+    if (typeof data === 'string') {
+      try { data = JSON.parse(data); } catch(e) { return; }
+    }
+    handleMessage(data);
+  });
+
+  conn.on('close', () => {
+    if (peerConn === conn) {
+      peerConn = null;
+      state.connection.connected = false;
+      state.connection.status = 'disconnected';
+      state.role = null;
+      state.dice.red.available = false;
+      state.dice.blue.available = false;
+      updateConnectionUI();
+      renderDice();
+    }
+  });
+
+  conn.on('error', () => {
+    if (peerConn === conn) {
+      state.connection.status = 'error';
+      updateConnectionUI();
+    }
+  });
+}
+
+function sendMsg(payload) {
+  if (!peerConn) return;
+  try {
+    peerConn.send(JSON.stringify(payload));
+  } catch(e) {
+    console.warn('发送消息失败:', e);
+  }
+}
+
+function handleMessage(msg) {
+  switch (msg.type) {
+    case 'GAME_STATE_FULL':
+      if (msg.state) mergeRemoteState(msg.state);
+      break;
+
+    case 'DICE_ROLL':
+      // 对端的骰子结果
+      {
+        const { dice, roll, newPosition, prevPosition } = msg;
+        // 播放动画
+        animateDice(dice, roll, () => {
+          state.piece.prevPosition = prevPosition;
+          state.piece.position = newPosition;
+          state.dice[dice].value = roll;
+          state.dice[dice].face = roll;
+          state.game.lastMovedBy = dice;
+          state.game.lastMoveAmount = roll;
+          updateDiceAvailability();
+          checkWin();
+          renderAll();
+        });
+      }
+      break;
+
+    case 'BOARD_CONFIG_UPDATE':
+      if (msg.board) {
+        state.board = msg.board;
+        resetGameState();
+        renderAll();
+      }
+      break;
+
+    case 'GAME_RESET':
+      resetGameState();
+      renderAll();
+      break;
+  }
+}
+
+function disconnectPeer() {
+  if (peerConn) { peerConn.close(); peerConn = null; }
+  state.connection.connected = false;
+  state.connection.status = 'disconnected';
+  state.connection.remotePeerId = null;
+  state.role = null;
+  state.dice.red.available = false;
+  state.dice.blue.available = false;
+  updateConnectionUI();
+  renderDice();
+}
+
+// ==================== 全部渲染 ====================
+function renderAll() {
+  renderBoard();
+  renderDice();
+  updateStatusBar();
+}
+
+// ==================== 事件绑定 ====================
+function bindEvents() {
+  // 骰子
+  $('redDice').addEventListener('click', () => rollDice('red'));
+  $('blueDice').addEventListener('click', () => rollDice('blue'));
+
+  // 连接
+  $('connectBtn').addEventListener('click', connectToPeer);
+  $('disconnectBtn').addEventListener('click', disconnectPeer);
+
+  // 设置面板
+  $('settingsToggle').addEventListener('click', () => {
+    const panel = $('settings-panel');
+    panel.classList.toggle('open');
+  });
+
+  $('applySettingsBtn').addEventListener('click', applySettings);
+  $('resetGameBtn').addEventListener('click', () => {
+    if (confirm('确定要重置游戏吗？棋子将回到起点。')) {
+      resetGameState();
+      renderAll();
+      if (state.connection.connected && peerConn) {
+        sendMsg({ type: 'GAME_RESET' });
+      }
+    }
+  });
+
+  $('applyPeerServerBtn').addEventListener('click', applyPeerServerConfig);
+
+  // 再来一局
+  $('playAgainBtn').addEventListener('click', () => {
+    hideWinOverlay();
+    resetGameState();
+    renderAll();
+    if (state.connection.connected && peerConn) {
+      sendMsg({ type: 'GAME_RESET' });
+    }
+  });
+
+  // 棋盘cell点击（调试/快捷操作）
+  $('board-scroll').addEventListener('click', e => {
+    const cell = e.target.closest('.cell');
+    if (!cell) return;
+    const cellNum = parseInt(cell.dataset.cell);
+    if (isNaN(cellNum)) return;
+
+    // Ctrl+点击：直接移动棋子到该格子（仅离线/调试用）
+    if (e.ctrlKey || e.metaKey) {
+      state.piece.prevPosition = state.piece.position;
+      state.piece.position = cellNum;
+      updateDiceAvailability();
+      checkWin();
+      renderAll();
+      if (state.connection.connected && peerConn) {
+        sendMsg({
+          type: 'DICE_ROLL',
+          dice: 'red',
+          roll: 0,
+          newPosition: cellNum,
+          prevPosition: state.piece.prevPosition,
+        });
+      }
+    }
+  });
+}
+
+// ==================== 初始化 ====================
+function init() {
+  // 检测 file:// 协议
+  if (location.protocol === 'file:') {
+    $('file-warning').style.display = 'block';
+  }
+
+  loadPeerServerConfig();
+  initPeer();
+  updateDiceAvailability();
+  renderAll();
+  bindEvents();
+  updateConnectionUI();
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
+
+})();
+</script>
+</body>
+</html>
