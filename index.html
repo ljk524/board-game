@@ -1314,6 +1314,10 @@ async function createManualOffer() {
     $('manualOfferText').style.display = 'block';
     $('manualCopyOffer').style.display = '';
     $('manualAnswerText').value = '';
+    // 自动复制
+    $('manualOfferText').select();
+    document.execCommand('copy');
+    alert('连接码已自动复制！发给对方。\n\n对方打开手动连接，粘贴到下方输入框，点「确认连接」即可。');
   } catch(e) {
     alert('创建连接码失败：' + (e.message || '未知错误，请重试'));
     console.error(e);
@@ -1321,25 +1325,51 @@ async function createManualOffer() {
 }
 
 async function acceptManualAnswer() {
+  const answerText = $('manualAnswerText').value.trim();
+  if (!answerText) { alert('请先粘贴对方发来的码'); return; }
+
+  // 辅助函数：解析并诊断
+  let data;
+  try {
+    data = JSON.parse(answerText);
+  } catch(e) {
+    console.log('粘贴的内容（前100字符）:', answerText.substring(0, 100));
+    alert('码格式无效，不是合法 JSON。\n\n可能原因：\n1. 没有复制完整（请确保全选后复制）\n2. 粘贴到了多余字符\n\n前50字符：' + answerText.substring(0, 50));
+    return;
+  }
+
   if (!manualPc) {
-    // 作为接收方：没有 manualPc 时，先检查有没有 offer 数据
-    const answerText = $('manualAnswerText').value.trim();
-    if (!answerText) { alert('请先粘贴对方发来的码'); return; }
+    // 作为接收方：没有 manualPc 时，需要收到 offer
+    if (data.type === 'answer') {
+      alert('这看起来是回复码，不是连接码。\n\n请让对方先点「创建连接码」，把连接码发给你。');
+      return;
+    }
+    if (data.type !== 'offer') {
+      alert('未知的码类型："' + (data.type || '无') + '"\n\n需要 json 中包含 "type":"offer"');
+      return;
+    }
     try {
-      const data = JSON.parse(answerText);
-      if (data.type !== 'offer') { alert('格式错误：需要对方的连接码（offer）'); return; }
       await receiveManualOffer(data);
-    } catch(e) { alert('回复码格式错误：' + e.message); return; }
+    } catch(e) {
+      alert('接收连接码失败：' + (e.message || '未知错误'));
+      console.error(e);
+    }
   } else {
     // 作为发码方：接收 answer
-    const answerText = $('manualAnswerText').value.trim();
-    if (!answerText) { alert('请粘贴对方发来的回复码'); return; }
+    if (data.type === 'offer') {
+      alert('这看起来是连接码，不是回复码。\n\n你已经创建过连接码了，请等对方回复后粘贴回复码。');
+      return;
+    }
+    if (data.type !== 'answer') {
+      alert('未知的码类型："' + (data.type || '无') + '"\n\n需要 json 中包含 "type":"answer"');
+      return;
+    }
     try {
-      const data = JSON.parse(answerText);
-      if (data.type !== 'answer') { alert('格式错误：需要回复码（answer）'); return; }
       await manualPc.setRemoteDescription(new RTCSessionDescription(data));
-      // 连接会自动建立
-    } catch(e) { alert('回复码格式错误：' + e.message); return; }
+    } catch(e) {
+      alert('回复码格式错误：' + (e.message || '未知错误'));
+      console.error(e);
+    }
   }
 }
 
