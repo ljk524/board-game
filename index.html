@@ -1338,49 +1338,99 @@ async function acceptManualAnswer() {
 
   console.log('收到码长度:', answerText.length, '开头:', answerText.substring(0, 30));
 
-  // 辅助函数：解析并诊断
+  // 防止重复点击
+  const btn = $('manualAcceptAnswer');
+  if (btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = '处理中...';
+
   let data;
   try {
     data = JSON.parse(answerText);
   } catch(e) {
     console.log('粘贴的内容（前100字符）:', answerText.substring(0, 100));
     alert('码格式无效（' + answerText.length + '字符），不是合法 JSON。\n\n可能原因：\n1. 没有复制完整 — 请长按对方消息 → 全选 → 复制\n2. 微信可能截断了长消息\n\n开头：' + answerText.substring(0, 60) + '\n结尾：' + answerText.substring(answerText.length - 20));
+    btn.disabled = false;
+    btn.textContent = '确认连接';
     return;
   }
+
+  try {
 
   if (!manualPc) {
     // 作为接收方：没有 manualPc 时，需要收到 offer
     if (data.type === 'answer') {
       alert('这看起来是回复码，不是连接码。\n\n请让对方先点「创建连接码」，把连接码发给你。');
+      btn.disabled = false;
+      btn.textContent = '确认连接';
       return;
     }
     if (data.type !== 'offer') {
       alert('未知的码类型："' + (data.type || '无') + '"\n\n需要 json 中包含 "type":"offer"');
+      btn.disabled = false;
+      btn.textContent = '确认连接';
       return;
     }
-    try {
-      await receiveManualOffer(data);
-    } catch(e) {
-      alert('接收连接码失败：' + (e.message || '未知错误'));
-      console.error(e);
-    }
+    await receiveManualOffer(data);
   } else {
     // 作为发码方：接收 answer
     if (data.type === 'offer') {
       alert('这看起来是连接码，不是回复码。\n\n你已经创建过连接码了，请等对方回复后粘贴回复码。');
+      btn.disabled = false;
+      btn.textContent = '确认连接';
       return;
     }
     if (data.type !== 'answer') {
       alert('未知的码类型："' + (data.type || '无') + '"\n\n需要 json 中包含 "type":"answer"');
+      btn.disabled = false;
+      btn.textContent = '确认连接';
       return;
     }
-    try {
-      await manualPc.setRemoteDescription(new RTCSessionDescription(data));
-    } catch(e) {
-      alert('回复码格式错误：' + (e.message || '未知错误'));
-      console.error(e);
+
+    // 检查 WebRTC 状态，防止重复设置
+    if (manualPc.signalingState !== 'have-local-offer') {
+      if (state.connection.connected) {
+        alert('已连接成功！');
+        btn.disabled = false;
+        btn.textContent = '确认连接';
+        return;
+      }
+      alert('连接状态异常（' + manualPc.signalingState + '），请关闭弹窗后重新创建连接码。');
+      btn.disabled = false;
+      btn.textContent = '确认连接';
+      return;
+    }
+
+    await manualPc.setRemoteDescription(new RTCSessionDescription(data));
+    $('manualAnswerText').value = '';
+    btn.textContent = '等待连接...';
+
+    // 等待数据通道打开（最多 10 秒）
+    const connected = await new Promise(resolve => {
+      if (manualDc && manualDc.readyState === 'open') { resolve(true); return; }
+      const onOpen = () => { resolve(true); };
+      const onClose = () => { resolve(false); };
+      const onError = () => { resolve(false); };
+      if (manualDc) {
+        manualDc.addEventListener('open', onOpen, { once: true });
+        manualDc.addEventListener('close', onClose, { once: true });
+        manualDc.addEventListener('error', onError, { once: true });
+      }
+      setTimeout(() => { resolve(false); }, 10000);
+    });
+
+    if (!connected) {
+      alert('连接超时，可能网络不通。\n\n请尝试：\n1. 双方在同一 WiFi 下\n2. 关闭后重试一次');
     }
   }
+
+  } catch(e) {
+    alert('出错了：' + (e.message || '未知错误'));
+    console.error(e);
+  }
+
+  btn.disabled = false;
+  btn.textContent = '确认连接';
 }
 
 async function receiveManualOffer(data) {
